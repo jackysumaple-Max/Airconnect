@@ -1,0 +1,6 @@
+{
+  "name": "CTExcel - Telecom Dealer & Custom CRM",
+  "description": "CTExcel mobile phone plans powered by the Telus network with China & US roaming, secret staff portal, and tiered monthly residual commission engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
