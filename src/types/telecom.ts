@@ -49,6 +49,7 @@ export interface CommissionRecord {
   clawbackTriggeredAt?: string;
   daysActiveBeforeCancel?: number;
   multiplierUsed?: number; // e.g. 1.5x
+  multiplierLockedAt?: string; // ISO timestamp when multiplier was permanently locked to activation
 }
 
 export interface ResidualRecord {
@@ -153,6 +154,7 @@ export interface StaffRep {
   avatarColor: string;
   password?: string;
   commissionMultiplier: number; // 0.5x to 2.0x (Master Admin only)
+  multiplierUpdatedAt?: string; // ISO timestamp when multiplier was last changed
   isAccessRevoked: boolean; // Instant revocation of access
   allowedViewRepNames?: string[]; // Legacy fallback
   peerPermissions?: PeerPermission[]; // Granular peer visibility toggles: [Leads, Active Lines, Non-Active Lines]

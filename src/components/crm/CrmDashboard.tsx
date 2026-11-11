@@ -18,6 +18,7 @@ import { CmsEditor } from './CmsEditor';
 import { StaffManagement } from './StaffManagement';
 import { CustomerProfileModal } from './CustomerProfileModal';
 import { NewCustomerModal } from './NewCustomerModal';
+import { ExcelExportModal } from './ExcelExportModal';
 import {
   Users,
   Activity,
@@ -32,6 +33,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Shield,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface CrmDashboardProps {
@@ -49,6 +51,7 @@ interface CrmDashboardProps {
   onSavePlans: (plans: Plan[]) => void;
   onResetData: () => void;
   onUpdateStaffList?: (updatedList: StaffRep[]) => void;
+  onUpdateCustomers?: (updatedList: CustomerRecord[]) => void;
 }
 
 export const CrmDashboard: React.FC<CrmDashboardProps> = ({
@@ -66,6 +69,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   onSavePlans,
   onResetData,
   onUpdateStaffList,
+  onUpdateCustomers,
 }) => {
   // Master Admin status
   const isMasterAdmin = Boolean(currentStaff.isMasterAdmin || currentStaff.role === 'super_admin');
@@ -87,6 +91,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   // Modal states
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [isExcelExportModalOpen, setIsExcelExportModalOpen] = useState(false);
 
   // Available months dynamically extracted from customer records
   const availableMonths = useMemo(() => {
@@ -238,11 +243,12 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         ...lead.commission,
         amount: commissionVal,
         multiplierUsed: multiplier,
+        multiplierLockedAt: new Date().toISOString(),
         status: 'paid',
         payoutDate: today,
         isClawbackFlagged: false,
       },
-      notes: `${lead.notes || ''}\n[Activated on ${today} by ${currentStaff.name} with ${multiplier}x multiplier]`,
+      notes: `${lead.notes || ''}\n[Activated on ${today} by ${currentStaff.name} with locked ${multiplier}x multiplier]`,
     };
     onSaveCustomer(lead.id, updates);
   };
@@ -461,14 +467,21 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
           {/* Quick Right Actions */}
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleExportCsv}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
-              title="Download CSV"
-            >
-              <Download className="h-3.5 w-3.5 text-slate-500" />
-              <span className="hidden sm:inline">Export CSV</span>
-            </button>
+            {/* Excel Export Module (Strictly Locked to Master Admin Exclusive) */}
+            {isMasterAdmin && (
+              <button
+                type="button"
+                onClick={() => setIsExcelExportModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50/90 hover:bg-emerald-100 px-3.5 py-2 text-xs font-bold text-emerald-950 transition-colors shadow-2xs"
+                title="Excel Export Module (.xlsx) - Master Admin Exclusive"
+              >
+                <FileSpreadsheet className="h-4 w-4 text-emerald-700" />
+                <span>Export to Excel</span>
+                <span className="rounded bg-emerald-200 text-emerald-900 font-extrabold text-[9px] px-1.5 py-0.2 border border-emerald-300/80">
+                  .xlsx
+                </span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsNewModalOpen(true)}
@@ -614,6 +627,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             currentStaff={currentStaff}
             onOpenCustomer={(customer) => setSelectedCustomer(customer)}
             onUpdateCommissionStatus={handleUpdateCommissionStatus}
+            onUpdateCustomers={onUpdateCustomers}
+            onUpdateStaffList={onUpdateStaffList}
           />
         )}
 
@@ -621,6 +636,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           <StaffManagement
             staffMembers={staffMembers}
             currentStaff={currentStaff}
+            customers={customers}
+            onUpdateCustomers={onUpdateCustomers}
             onUpdateStaffList={onUpdateStaffList || ((l) => TelecomStorage.saveStaff(l))}
           />
         )}
@@ -661,6 +678,15 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           onAdd={onAddCustomer}
         />
       )}
+
+      {/* Excel Export Module (Admin Exclusive) */}
+      <ExcelExportModal
+        isOpen={isExcelExportModalOpen}
+        onClose={() => setIsExcelExportModalOpen(false)}
+        customers={customers}
+        staffMembers={staffMembers}
+        isMasterAdmin={isMasterAdmin}
+      />
 
     </div>
   );

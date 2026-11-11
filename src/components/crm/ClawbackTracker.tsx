@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { CustomerRecord, StaffRep, CommissionStatus } from '../../types/telecom';
-import { calculateDaysBetween } from '../../services/telecomStorage';
+import { calculateDaysBetween, TelecomStorage } from '../../services/telecomStorage';
 import {
   AlertTriangle,
   DollarSign,
@@ -19,7 +19,10 @@ import {
   Layers,
   Sparkles,
   User,
+  Sliders,
+  History,
 } from 'lucide-react';
+import { MultiplierAdjustmentModal } from './MultiplierAdjustmentModal';
 
 interface ClawbackTrackerProps {
   customers: CustomerRecord[];
@@ -27,6 +30,8 @@ interface ClawbackTrackerProps {
   currentStaff: StaffRep;
   onOpenCustomer: (customer: CustomerRecord) => void;
   onUpdateCommissionStatus: (id: string, status: CommissionStatus) => void;
+  onUpdateCustomers?: (updatedList: CustomerRecord[]) => void;
+  onUpdateStaffList?: (updatedList: StaffRep[]) => void;
 }
 
 export const ClawbackTracker: React.FC<ClawbackTrackerProps> = ({
@@ -35,8 +40,14 @@ export const ClawbackTracker: React.FC<ClawbackTrackerProps> = ({
   currentStaff,
   onOpenCustomer,
   onUpdateCommissionStatus,
+  onUpdateCustomers,
+  onUpdateStaffList,
 }) => {
   const isMasterAdmin = Boolean(currentStaff.isMasterAdmin || currentStaff.role === 'super_admin');
+
+  // Multiplier Adjustment & Retroactive Recalculation Modal State (Admin Override Tool)
+  const [isMultiplierModalOpen, setIsMultiplierModalOpen] = useState(false);
+  const [targetMultiplierRep, setTargetMultiplierRep] = useState<StaffRep | null>(null);
 
   // --- 1. DYNAMIC FILTERING SYSTEM ---
   // Date Range Selector: 'all' | 'single' | 'custom'
@@ -618,9 +629,26 @@ export const ClawbackTracker: React.FC<ClawbackTrackerProps> = ({
 
                       {/* Multiplier */}
                       <td className="py-3.5 px-4">
-                        <span className="font-mono font-bold text-emerald-900 bg-emerald-100/70 border border-emerald-300 px-2 py-0.5 rounded text-[11px]">
-                          {row.rep.commissionMultiplier}x
-                        </span>
+                        {isMasterAdmin ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTargetMultiplierRep(row.rep);
+                              setIsMultiplierModalOpen(true);
+                            }}
+                            className="font-mono font-bold text-emerald-900 bg-emerald-100/80 hover:bg-emerald-200 border border-emerald-300 px-2 py-0.5 rounded text-[11px] inline-flex items-center gap-1 transition-colors group"
+                            title="Master Admin: Configure multiplier & retroactive recalculation"
+                          >
+                            <Sliders className="h-3 w-3 text-emerald-700" />
+                            <span>{row.rep.commissionMultiplier}x</span>
+                            <span className="text-[9px] text-emerald-700 font-normal underline ml-0.5 group-hover:text-emerald-950">
+                              Edit
+                            </span>
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 font-mono text-[11px]">—</span>
+                        )}
                       </td>
 
                       {/* Active Lines */}
@@ -955,6 +983,29 @@ export const ClawbackTracker: React.FC<ClawbackTrackerProps> = ({
           </div>
         )}
       </div>
+
+      {/* Multiplier Adjustment & Retroactive Recalculation Modal */}
+      {isMultiplierModalOpen && targetMultiplierRep && (
+        <MultiplierAdjustmentModal
+          isOpen={isMultiplierModalOpen}
+          onClose={() => {
+            setIsMultiplierModalOpen(false);
+            setTargetMultiplierRep(null);
+          }}
+          rep={targetMultiplierRep}
+          customers={customers}
+          onSuccess={(updatedRep, updatedCustomers) => {
+            if (onUpdateStaffList) {
+              onUpdateStaffList(TelecomStorage.getStaff());
+            }
+            if (updatedCustomers && onUpdateCustomers) {
+              onUpdateCustomers(updatedCustomers);
+            }
+            setIsMultiplierModalOpen(false);
+            setTargetMultiplierRep(null);
+          }}
+        />
+      )}
 
     </div>
   );

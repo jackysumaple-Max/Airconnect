@@ -174,6 +174,11 @@ export default function App() {
     }
   };
 
+  const handleUpdateCustomerList = (updated: CustomerRecord[]) => {
+    TelecomStorage.saveCustomers(updated);
+    setCustomers(updated);
+  };
+
   const handleSelectPromoPlan = () => {
     setSelectedPlanId('ctexcel-27-50gb');
     const el = document.getElementById('lead-form');
@@ -217,6 +222,7 @@ export default function App() {
         onSavePlans={handleSavePlans}
         onResetData={handleResetData}
         onUpdateStaffList={handleUpdateStaffList}
+        onUpdateCustomers={handleUpdateCustomerList}
       />
     );
   }
@@ -272,11 +278,10 @@ export default function App() {
         <FaqSection />
       </main>
 
-      {/* Public Footer with Admin & Staff Portal login buttons */}
+      {/* Public Footer with unified Admin & Staff Portal login button */}
       <Footer
         cms={cms}
-        onNavigateToStaffPortal={navigateToStaffPortal}
-        onNavigateToAdminPortal={navigateToAdminPortal}
+        onNavigateToPortal={navigateToStaffPortal}
       />
 
       {/* Hidden Unlisted Access Hint for Evaluators:

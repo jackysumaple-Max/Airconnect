@@ -39,6 +39,9 @@ export const NewCustomerModal: React.FC<NewCustomerModalProps> = ({
 
     const selectedPlan = plans.find((p) => p.id === preferredPlanId) || plans[0];
     const newId = status === 'lead' ? `LEAD-${Math.floor(1000 + Math.random() * 9000)}` : `ACT-${Math.floor(4000 + Math.random() * 5000)}`;
+    const repObj = staffMembers.find((s) => s.name === salesRep);
+    const assignedMultiplier = repObj ? repObj.commissionMultiplier : 1.0;
+    const computedCommission = Number((selectedPlan.monthlyPrice * assignedMultiplier).toFixed(2));
 
     const newRecord: CustomerRecord = {
       id: newId,
@@ -57,7 +60,7 @@ export const NewCustomerModal: React.FC<NewCustomerModalProps> = ({
       submittedAt: new Date().toISOString(),
       activationStartDate: status === 'active_line' ? activationStartDate : undefined,
       simType: 'eSIM',
-      notes: notes.trim() || 'Manual entry by staff.',
+      notes: notes.trim() || `Manual entry by ${salesRep}. Locked multiplier: ${assignedMultiplier}x.`,
       leadFollowUpStatus: status === 'lead' ? 'new' : undefined,
       idVerification: {
         status: status === 'active_line' ? 'verified' : 'unverified',
@@ -65,7 +68,9 @@ export const NewCustomerModal: React.FC<NewCustomerModalProps> = ({
         verifiedBy: status === 'active_line' ? salesRep : undefined,
       },
       commission: {
-        amount: selectedPlan.commissionRate,
+        amount: computedCommission,
+        multiplierUsed: assignedMultiplier,
+        multiplierLockedAt: new Date().toISOString(),
         status: status === 'active_line' ? 'paid' : 'pending',
         isClawbackFlagged: false,
         payoutDate: status === 'active_line' ? activationStartDate : undefined,

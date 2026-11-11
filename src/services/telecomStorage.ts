@@ -1151,6 +1151,81 @@ export const TelecomStorage = {
     });
   },
 
+  /**
+   * Selective Retroactive Recalculation (Master Admin Override Tool)
+   * Scans a specific sales rep's activations within [startDate, endDate]
+   * and recalculates past commission values using the newly assigned multiplier.
+   * Activations outside of that selected date range remain completely untouched.
+   */
+  recalculateRetroactiveCommissions(
+    repName: string,
+    newMultiplier: number,
+    startDate: string,
+    endDate: string
+  ): {
+    updatedCount: number;
+    previousTotal: number;
+    newTotal: number;
+    updatedCustomers: CustomerRecord[];
+  } {
+    const customers = this.getCustomers();
+    let updatedCount = 0;
+    let previousTotal = 0;
+    let newTotal = 0;
+    const nowIso = new Date().toISOString();
+
+    const updatedCustomers = customers.map((c) => {
+      // Must match the rep
+      if (c.salesRep.toLowerCase() !== repName.toLowerCase()) {
+        return c;
+      }
+      // Must have an activation date
+      const actDate = c.activationStartDate || c.commission?.payoutDate;
+      if (!actDate) {
+        return c;
+      }
+
+      // Check date bounds (YYYY-MM-DD)
+      const dateStr = actDate.substring(0, 10);
+      const isAfterOrEqualStart = !startDate || dateStr >= startDate;
+      const isBeforeOrEqualEnd = !endDate || dateStr <= endDate;
+
+      if (isAfterOrEqualStart && isBeforeOrEqualEnd) {
+        const oldAmount = c.commission?.amount || 0;
+        const planPrice = c.monthlyPlanPrice || 30;
+        const calculatedAmount = Number((planPrice * newMultiplier).toFixed(2));
+
+        previousTotal += oldAmount;
+        newTotal += calculatedAmount;
+        updatedCount += 1;
+
+        return {
+          ...c,
+          commission: {
+            ...c.commission,
+            amount: calculatedAmount,
+            multiplierUsed: newMultiplier,
+            multiplierLockedAt: nowIso,
+          },
+          notes: `${c.notes || ''}\n[Retroactive recalculation: Multiplier adjusted from ${c.commission?.multiplierUsed ?? 1.0}x to ${newMultiplier}x by Master Admin on ${nowIso.split('T')[0]}]`,
+        };
+      }
+
+      return c;
+    });
+
+    if (updatedCount > 0) {
+      this.saveCustomers(updatedCustomers);
+    }
+
+    return {
+      updatedCount,
+      previousTotal: Number(previousTotal.toFixed(2)),
+      newTotal: Number(newTotal.toFixed(2)),
+      updatedCustomers,
+    };
+  },
+
   // --- MFA (SMS OTP) PROTOCOL FOR 647-261-8488 ---
   generateMfaOtp(): string {
     // Generate 6-digit random code

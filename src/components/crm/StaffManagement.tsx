@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { StaffRep, PeerPermission, MASTER_ADMIN_EMAIL, MASTER_ADMIN_MFA_PHONE, MASTER_ADMIN_PASSWORD, DEMO_REP_PASSWORD } from '../../types/telecom';
+import { StaffRep, PeerPermission, CustomerRecord, MASTER_ADMIN_EMAIL, MASTER_ADMIN_MFA_PHONE, MASTER_ADMIN_PASSWORD, DEMO_REP_PASSWORD } from '../../types/telecom';
 import { TelecomStorage, calculateCommissionForPlanAndRep } from '../../services/telecomStorage';
 import { MasterAdminMfaModal } from './MasterAdminMfaModal';
+import { MultiplierAdjustmentModal } from './MultiplierAdjustmentModal';
 import {
   Users,
   UserPlus,
@@ -23,23 +24,32 @@ import {
   Check,
   ChevronDown,
   UserCheck,
+  History,
 } from 'lucide-react';
 
 interface StaffManagementProps {
   staffMembers: StaffRep[];
   currentStaff: StaffRep;
+  customers?: CustomerRecord[];
+  onUpdateCustomers?: (updatedList: CustomerRecord[]) => void;
   onUpdateStaffList: (updatedList: StaffRep[]) => void;
 }
 
 export const StaffManagement: React.FC<StaffManagementProps> = ({
   staffMembers,
   currentStaff,
+  customers = [],
+  onUpdateCustomers,
   onUpdateStaffList,
 }) => {
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState(false);
   const [targetCredentialsRep, setTargetCredentialsRep] = useState<StaffRep | null>(null);
+
+  // Multiplier Historical Adjustment Modal State
+  const [isMultiplierModalOpen, setIsMultiplierModalOpen] = useState(false);
+  const [targetMultiplierRep, setTargetMultiplierRep] = useState<StaffRep | null>(null);
 
   // Edit Credentials Form State (Username / Account Name + Password + Email)
   const [editUsername, setEditUsername] = useState('');
@@ -223,7 +233,24 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     action();
   };
 
-  // Update Variable Commission Multiplier (Master Admin only)
+  // Update Variable Commission Multiplier with Historical Preservation / Retroactive Recalculation
+  const handleOpenMultiplierModal = (rep: StaffRep) => {
+    setTargetMultiplierRep(rep);
+    setIsMultiplierModalOpen(true);
+  };
+
+  const handleMultiplierSuccess = (updatedRep: StaffRep, updatedCustomers?: CustomerRecord[]) => {
+    onUpdateStaffList(TelecomStorage.getStaff());
+    if (updatedCustomers && onUpdateCustomers) {
+      onUpdateCustomers(updatedCustomers);
+      showToast(`Multiplier updated to ${updatedRep.commissionMultiplier}x & past activations recalculated!`);
+    } else {
+      showToast(`Multiplier updated to ${updatedRep.commissionMultiplier}x (Future activations only, past locked)`);
+    }
+    setIsMultiplierModalOpen(false);
+    setTargetMultiplierRep(null);
+  };
+
   const handleUpdateMultiplier = (repId: string, multiplier: number) => {
     const val = Math.max(0.5, Math.min(2.0, parseFloat(multiplier.toFixed(2))));
     TelecomStorage.updateCommissionMultiplier(repId, val);
@@ -393,19 +420,18 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                     {/* Variable Commission Multiplier (0.5x to 2.0x) */}
                     <td className="py-3.5 px-3">
                       <div className="flex items-center gap-2">
-                        <input
-                          type="range"
-                          min="0.5"
-                          max="2.0"
-                          step="0.05"
-                          disabled={staff.isMasterAdmin && !currentStaff.isMasterAdmin}
-                          value={staff.commissionMultiplier}
-                          onChange={(e) => handleUpdateMultiplier(staff.id, parseFloat(e.target.value))}
-                          className="w-24 accent-emerald-600 cursor-pointer"
-                        />
-                        <span className="font-mono font-extrabold text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded tabular-nums min-w-[46px] text-center">
-                          {staff.commissionMultiplier.toFixed(2)}x
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenMultiplierModal(staff)}
+                          className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100/90 px-2.5 py-1 text-xs font-bold text-emerald-950 transition-colors shadow-2xs group"
+                          title="Click to configure multiplier and retroactive recalculation scope"
+                        >
+                          <Sliders className="h-3.5 w-3.5 text-emerald-700" />
+                          <span className="font-mono">{staff.commissionMultiplier.toFixed(2)}x</span>
+                          <span className="text-[10px] text-emerald-700 underline font-semibold ml-0.5 group-hover:text-emerald-900">
+                            Configure
+                          </span>
+                        </button>
                       </div>
                     </td>
 
@@ -896,6 +922,20 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Multiplier Update & Selective Retroactive Recalculation Modal */}
+      {isMultiplierModalOpen && targetMultiplierRep && (
+        <MultiplierAdjustmentModal
+          isOpen={isMultiplierModalOpen}
+          onClose={() => {
+            setIsMultiplierModalOpen(false);
+            setTargetMultiplierRep(null);
+          }}
+          rep={targetMultiplierRep}
+          customers={customers}
+          onSuccess={handleMultiplierSuccess}
+        />
       )}
 
       {/* MFA Modal for Master Admin Security */}
