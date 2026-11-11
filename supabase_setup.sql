@@ -3,16 +3,19 @@
 -- Run this script in your Supabase project's SQL Editor
 -- ============================================================
 
--- 1. LEADS TABLE (Frontend Lead Capture, Realtime Sync, Soft Delete)
-CREATE TABLE IF NOT EXISTS public.leads (
-    id TEXT PRIMARY KEY,
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    full_name TEXT NOT NULL,
-    email TEXT NOT NULL,
-    phone TEXT NOT NULL,
+-- 1. LEADS TABLE (Table: "Airwireless" and table: "leads")
+-- If your Supabase database uses table "Airwireless":
+CREATE TABLE IF NOT EXISTS public."Airwireless" (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    first_name TEXT,
+    last_name TEXT,
+    full_name TEXT,
+    name TEXT,
+    email TEXT,
+    phone TEXT,
     preferred_plan_id TEXT,
     preferred_plan_name TEXT,
+    plan TEXT,
     monthly_plan_price NUMERIC DEFAULT 30,
     sales_rep TEXT DEFAULT 'Unassigned',
     referral_source TEXT DEFAULT 'Website Lead Capture',
@@ -22,32 +25,64 @@ CREATE TABLE IF NOT EXISTS public.leads (
     notes TEXT DEFAULT '',
     submitted_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    -- Soft-Delete & Trash Columns
     is_deleted BOOLEAN DEFAULT false,
     deleted_at TIMESTAMPTZ,
     deleted_by TEXT
 );
 
--- CRITICAL FIX FOR BUG 1: Explicitly grant permissions to anon (anonymous) role
--- This allows visitors on mobile devices and external PCs to insert leads
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public."Airwireless" TO anon, authenticated, service_role;
+ALTER TABLE public."Airwireless" ENABLE ROW LEVEL SECURITY;
 
--- Enable Row Level Security (RLS) on leads table
+DROP POLICY IF EXISTS "Allow anon insert" ON public."Airwireless";
+DROP POLICY IF EXISTS "Allow anonymous lead insert" ON public."Airwireless";
+CREATE POLICY "Allow anon insert" ON public."Airwireless"
+    FOR INSERT 
+    TO anon, authenticated, public
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow staff to select leads" ON public."Airwireless";
+CREATE POLICY "Allow staff to select leads" ON public."Airwireless"
+    FOR SELECT 
+    TO anon, authenticated, public
+    USING (true);
+
+-- Fallback table: public.leads
+CREATE TABLE IF NOT EXISTS public.leads (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    first_name TEXT,
+    last_name TEXT,
+    full_name TEXT,
+    name TEXT,
+    email TEXT,
+    phone TEXT,
+    preferred_plan_id TEXT,
+    preferred_plan_name TEXT,
+    plan TEXT,
+    monthly_plan_price NUMERIC DEFAULT 30,
+    sales_rep TEXT DEFAULT 'Unassigned',
+    referral_source TEXT DEFAULT 'Website Lead Capture',
+    callback_time_preference TEXT DEFAULT 'As soon as possible',
+    status TEXT DEFAULT 'lead',
+    lead_follow_up_status TEXT DEFAULT 'new',
+    notes TEXT DEFAULT '',
+    submitted_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    is_deleted BOOLEAN DEFAULT false,
+    deleted_at TIMESTAMPTZ,
+    deleted_by TEXT
+);
+
+GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;
 ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 
--- Allow anonymous visitors on the landing page to insert callback requests
 DROP POLICY IF EXISTS "Allow anonymous lead insert" ON public.leads;
-DROP POLICY IF EXISTS "Allow public insert to leads" ON public.leads;
-DROP POLICY IF EXISTS "Enable insert for everyone" ON public.leads;
 CREATE POLICY "Allow anonymous lead insert" ON public.leads
     FOR INSERT 
     TO anon, authenticated, public
     WITH CHECK (true);
 
--- Allow authenticated staff members (and anon dashboard sync) to select leads
 DROP POLICY IF EXISTS "Allow staff to select leads" ON public.leads;
-DROP POLICY IF EXISTS "Allow public read leads" ON public.leads;
 CREATE POLICY "Allow staff to select leads" ON public.leads
     FOR SELECT 
     TO anon, authenticated, public

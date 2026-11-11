@@ -218,17 +218,18 @@ export default function App() {
     // 1. Immediately store in local state/storage so UI is responsive
     const created = TelecomStorage.addLead(leadData);
 
-    // 2. Insert into Supabase database ('leads' or 'customers' table)
+    // 2. Insert into Supabase database (table 'Airwireless' per production database setup)
     if (isSupabaseConfigured) {
-      try {
-        const { error, rejectionReason } = await insertLeadToSupabase(created);
-        if (error) {
-          console.error('CRITICAL: Supabase lead insertion failed in handleLeadSubmit:', rejectionReason || error.message);
-          throw new Error(rejectionReason || error.message);
-        }
-      } catch (err: any) {
-        console.error('CRITICAL: Exception during Supabase lead insertion in handleLeadSubmit:', err);
-        throw err;
+      const res = await insertLeadToSupabase(created);
+      if (res.error) {
+        console.error('CRITICAL: Supabase lead insertion failed in handleLeadSubmit:', res.rejectionReason || res.error.message);
+        const enhancedError: any = new Error(res.error.message);
+        enhancedError.details = res.errorDetails?.details || null;
+        enhancedError.hint = res.errorDetails?.hint || null;
+        enhancedError.code = res.errorDetails?.code || null;
+        enhancedError.table = res.tableUsed || res.errorDetails?.table || 'Airwireless';
+        enhancedError.rejectionReason = res.rejectionReason;
+        throw enhancedError;
       }
     } else {
       console.warn('NOTE: Supabase credentials not configured in this deployment. Lead saved locally in browser.');

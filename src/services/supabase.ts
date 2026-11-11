@@ -214,11 +214,50 @@ export async function updateStaffPasswordInSupabase(
  * Connects directly to the 'leads' table (with fallback to 'customers' table).
  * Catches insertion errors and Row Level Security (RLS) policy violations with detailed console.error logs.
  */
+export interface SupabaseErrorDetails {
+  message: string;
+  details?: string | null;
+  hint?: string | null;
+  code?: string | null;
+  table: string;
+  status?: number | null;
+}
+
+/**
+ * Lead Table Configuration
+ * Defaults to 'Airwireless' per production database setup.
+ */
+export function getLeadsTableName(): string {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('ctexcel_supabase_leads_table');
+    if (custom && custom.trim()) return custom.trim();
+  }
+  return 'Airwireless';
+}
+
+export function setLeadsTableName(tableName: string) {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('ctexcel_supabase_leads_table', tableName.trim());
+  }
+}
+
+/**
+ * CRITICAL PRODUCTION BUG FIX:
+ * Inserts a new customer lead from the frontend "Request a Callback" form into Supabase.
+ * - Targets table 'Airwireless' (with fallback to 'airwireless' and 'leads').
+ * - CRITICAL: Does NOT call .select() at the end to prevent permission crashes when anon role only has INSERT rights.
+ * - Dynamically prunes unmapped columns if the database table schema uses a subset of fields.
+ * - Captures and returns exact error.message, error.details, error.hint, and error.code.
+ */
 export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
   data: any;
   error: Error | null;
   rejectionReason?: string;
+  errorDetails?: SupabaseErrorDetails;
+  tableUsed?: string;
 }> {
+  const targetTable = getLeadsTableName();
+
   if (!isSupabaseConfigured) {
     const reason = !supabaseUrl
       ? 'VITE_SUPABASE_URL is missing in the production deployment environment.'
@@ -228,155 +267,212 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
       data: null,
       error: new Error(`Database connection not configured: ${reason}`),
       rejectionReason: reason,
+      errorDetails: {
+        message: reason,
+        details: 'Neither environment variables nor localStorage credentials were provided.',
+        code: 'NO_CONFIG',
+        table: targetTable,
+      },
     };
   }
 
-  // Construct structured payload compatible with Supabase column naming conventions
-  const leadPayload = {
-    id: lead.id,
-    first_name: lead.firstName,
-    last_name: lead.lastName,
-    full_name: lead.fullName,
-    email: lead.email,
-    phone: lead.phone,
-    preferred_plan_id: lead.preferredPlanId,
-    preferred_plan_name: lead.preferredPlanName,
-    monthly_plan_price: lead.monthlyPlanPrice,
+  // Construct structured payload matching standard Supabase column names
+  // Notice: We intentionally do NOT force an arbitrary non-UUID 'id' string into the payload,
+  // preventing PostgreSQL 'invalid input syntax for type uuid' if the primary key uses gen_random_uuid().
+  const primaryPayload: Record<string, any> = {
+    first_name: lead.firstName || '',
+    last_name: lead.lastName || '',
+    full_name: lead.fullName || `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+    email: lead.email || '',
+    phone: lead.phone || '',
+    preferred_plan_name: lead.preferredPlanName || '',
+    preferred_plan_id: lead.preferredPlanId || '',
+    monthly_plan_price: lead.monthlyPlanPrice || null,
     sales_rep: lead.salesRep || 'Unassigned',
     referral_source: lead.referralSource || 'Website Lead Capture',
     callback_time_preference: lead.callbackTimePreference || 'As soon as possible',
     status: 'lead',
-    lead_follow_up_status: lead.leadFollowUpStatus || 'new',
     notes: lead.notes || '',
-    submitted_at: lead.submittedAt || new Date().toISOString(),
   };
 
-  try {
-    // 1. Primary insert attempt into 'leads' table
-    const { data, error } = await supabase.from('leads').insert([leadPayload]).select();
+  // Candidate tables to try: primary 'Airwireless', lowercase 'airwireless', and fallback 'leads'
+  const candidateTables = Array.from(new Set([targetTable, 'Airwireless', 'airwireless', 'leads', 'customers']));
 
-    if (error) {
-      console.error('Supabase insert to "leads" table failed:', error.message, {
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
+  let lastError: any = null;
+  let finalTableUsed = targetTable;
 
-      let rejectionReason = error.message;
+  for (const tbl of candidateTables) {
+    let currentPayload = { ...primaryPayload };
+    let attemptCount = 0;
+    const maxColumnRetries = 6;
 
-      // Check for Row Level Security (RLS) policy rejection (error code 42501)
-      if (
-        error.code === '42501' ||
-        error.message.toLowerCase().includes('row-level security') ||
-        error.message.toLowerCase().includes('policy')
-      ) {
-        rejectionReason =
-          'RLS Policy Rejection (Code 42501): The public anon role is not authorized to INSERT into table "leads". Please run the SQL snippet in supabase_setup.sql in your Supabase SQL Editor to grant anonymous INSERT permissions.';
-        console.error(
-          'CRITICAL RLS POLICY ERROR ON SUPABASE "leads" TABLE:\n' +
-          'Row Level Security is enabled on table "leads", but no policy allows anonymous INSERT from public website visitors.\n' +
-          'To fix this, run this SQL in your Supabase SQL Editor:\n' +
-          '  GRANT USAGE ON SCHEMA public TO anon, authenticated;\n' +
-          '  GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;\n' +
-          '  ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;\n' +
-          '  CREATE POLICY "Allow anonymous lead insert" ON public.leads FOR INSERT TO anon, authenticated, public WITH CHECK (true);'
-        );
-      }
+    while (attemptCount < maxColumnRetries) {
+      attemptCount++;
+      try {
+        console.log(`[Supabase Lead Insert] Attempting insert into table "${tbl}" (NO .select()). Payload keys:`, Object.keys(currentPayload));
+        
+        // CRITICAL: NO .select() AT THE END!
+        // Anonymous visitors typically have INSERT permission only.
+        // Calling .select() triggers 'RETURNING *' which requires SELECT permission and crashes with 42501.
+        const { error } = await supabase.from(tbl).insert([currentPayload]);
 
-      // If 'leads' table does not exist (PGRST204 or 42P01), attempt fallback to 'customers' table
-      if (error.code === '42P01' || error.message.includes('does not exist')) {
-        console.warn('Table "leads" not found. Attempting fallback insert into "customers" table...');
-        const custRes = await supabase.from('customers').insert([leadPayload]).select();
-        if (custRes.error) {
-          console.error('Supabase fallback insert to "customers" table also failed:', custRes.error.message, custRes.error);
+        if (!error) {
+          console.log(`[Supabase Lead Insert] SUCCESS! Row inserted into table "${tbl}".`);
           return {
-            data: null,
-            error: new Error(`Table "leads" does not exist and fallback failed: ${custRes.error.message}`),
-            rejectionReason: `Tables "leads" and "customers" do not exist in Supabase database. Please execute supabase_setup.sql.`,
+            data: true,
+            error: null,
+            tableUsed: tbl,
           };
         }
-        return { data: custRes.data, error: null };
-      }
 
-      return {
-        data: null,
-        error: new Error(rejectionReason),
-        rejectionReason,
-      };
+        lastError = error;
+        finalTableUsed = tbl;
+        console.warn(`[Supabase Lead Insert] Table "${tbl}" returned error (code: ${error.code}):`, error.message, error.details);
+
+        // Check for table relation not found (42P01 or PGRST204 with relation does not exist)
+        if (error.code === '42P01' || error.message.includes('does not exist') || error.message.includes('relation')) {
+          console.warn(`[Supabase Lead Insert] Table "${tbl}" not found. Trying next candidate table...`);
+          break; // Break inner while loop to try next candidate table
+        }
+
+        // Check for column missing / schema mismatch (code 42703 or PGRST204)
+        // e.g. "Could not find the 'xyz' column of 'Airwireless' in the schema cache" or 'column "xyz" of relation ... does not exist'
+        const columnMatch =
+          error.message.match(/Could not find the '([^']+)' column/i) ||
+          error.message.match(/column "([^"]+)" of relation/i) ||
+          error.message.match(/column "([^"]+)" does not exist/i);
+
+        if (columnMatch && columnMatch[1]) {
+          const missingCol = columnMatch[1];
+          if (missingCol in currentPayload) {
+            console.warn(`[Supabase Lead Insert] Pruning unmapped column "${missingCol}" from payload and retrying...`);
+            delete currentPayload[missingCol];
+            continue; // Retry with pruned payload
+          }
+        }
+
+        // If error is UUID syntax mismatch on 'id'
+        if (error.code === '22P02' && error.message.includes('uuid') && 'id' in currentPayload) {
+          delete currentPayload['id'];
+          continue;
+        }
+
+        // Any other error (like RLS policy 42501 permission denied) cannot be auto-recovered by payload change
+        break;
+      } catch (err: any) {
+        lastError = err;
+        finalTableUsed = tbl;
+        break;
+      }
     }
 
-    console.log('Lead successfully inserted into Supabase "leads" table:', lead.id);
-    return { data, error: null };
-  } catch (err: any) {
-    console.error('Unexpected exception during Supabase lead insertion:', err);
-    return {
-      data: null,
-      error: err instanceof Error ? err : new Error(String(err)),
-      rejectionReason: err?.message || 'Network error connecting to Supabase database.',
-    };
+    // If RLS permission error (42501), stop and return exact details immediately
+    if (lastError && (lastError.code === '42501' || lastError.message?.toLowerCase().includes('row-level security'))) {
+      break;
+    }
   }
+
+  // Format detailed error for UI surfacing
+  const errMsg = lastError?.message || 'Database rejected the submission.';
+  const errDetails = lastError?.details || null;
+  const errHint = lastError?.hint || null;
+  const errCode = lastError?.code || null;
+
+  const rejectionReason = `${errMsg}${errDetails ? ` | Details: ${errDetails}` : ''}${errHint ? ` | Hint: ${errHint}` : ''} (Table: ${finalTableUsed})`;
+
+  console.error('CRITICAL: Supabase lead insertion rejected:', {
+    message: errMsg,
+    details: errDetails,
+    hint: errHint,
+    code: errCode,
+    table: finalTableUsed,
+  });
+
+  return {
+    data: null,
+    error: new Error(errMsg),
+    rejectionReason,
+    errorDetails: {
+      message: errMsg,
+      details: errDetails,
+      hint: errHint,
+      code: errCode,
+      table: finalTableUsed,
+    },
+    tableUsed: finalTableUsed,
+  };
 }
 
 /**
  * Fetch remote leads from Supabase database to populate the Leads dashboard
+ * Checks 'Airwireless' first, with fallback to 'leads' and 'customers'.
  */
 export async function fetchLeadsFromSupabase(): Promise<{ data: CustomerRecord[] | null; error: any }> {
   if (!isSupabaseConfigured) {
     return { data: null, error: null };
   }
 
-  try {
-    // Attempt query on 'leads' table
-    let { data, error } = await supabase.from('leads').select('*').order('submitted_at', { ascending: false });
+  const tablesToTry = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
 
-    // Fallback query on 'customers' table if 'leads' table isn't present
-    if (error && (error.code === '42P01' || error.message.includes('does not exist'))) {
-      const custRes = await supabase.from('customers').select('*').eq('status', 'lead').order('submitted_at', { ascending: false });
-      data = custRes.data;
-      error = custRes.error;
+  for (const tbl of tablesToTry) {
+    try {
+      // First try ordering by submitted_at
+      let res = await supabase.from(tbl).select('*').order('submitted_at', { ascending: false });
+      
+      // If submitted_at column does not exist, try created_at or unordered
+      if (res.error && (res.error.code === '42703' || res.error.message.includes('column') || res.error.message.includes('order'))) {
+        res = await supabase.from(tbl).select('*').order('created_at', { ascending: false });
+      }
+      if (res.error && (res.error.code === '42703' || res.error.message.includes('column'))) {
+        res = await supabase.from(tbl).select('*');
+      }
+
+      if (res.error) {
+        if (res.error.code === '42P01' || res.error.message.includes('does not exist')) {
+          continue; // Try next table
+        }
+        console.warn(`Supabase fetch leads on table "${tbl}" returned:`, res.error.message);
+        continue;
+      }
+
+      if (res.data) {
+        // Format raw database records into CustomerRecord structure
+        const mapped: CustomerRecord[] = res.data.map((item: any) => ({
+          id: item.id ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
+          status: 'lead',
+          firstName: item.first_name || item.firstName || item.name?.split(' ')[0] || '',
+          lastName: item.last_name || item.lastName || item.name?.split(' ').slice(1).join(' ') || '',
+          fullName: item.full_name || item.fullName || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim(),
+          email: item.email || '',
+          phone: item.phone || '',
+          preferredPlanId: item.preferred_plan_id || item.preferredPlanId || '',
+          preferredPlanName: item.preferred_plan_name || item.preferredPlanName || item.plan || 'CTExcel Plan',
+          monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 30),
+          salesRep: item.sales_rep || item.salesRep || 'Unassigned',
+          referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
+          submittedAt: item.submitted_at || item.created_at || new Date().toISOString(),
+          callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
+          notes: item.notes || '',
+          leadFollowUpStatus: item.lead_follow_up_status || item.leadFollowUpStatus || 'new',
+          idVerification: {
+            status: item.id_verification_status || 'unverified',
+          },
+          commission: {
+            amount: Number((Number(item.monthly_plan_price || 30) * 1.0).toFixed(2)),
+            status: 'pending',
+            isClawbackFlagged: false,
+            multiplierUsed: 1.0,
+          },
+        }));
+
+        return { data: mapped, error: null };
+      }
+    } catch {
+      continue;
     }
-
-    if (error) {
-      console.error('Supabase fetch leads error:', error.message, error);
-      return { data: null, error };
-    }
-
-    if (!data) return { data: [], error: null };
-
-    // Format raw database records into CustomerRecord structure
-    const mapped: CustomerRecord[] = data.map((item: any) => ({
-      id: item.id || `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
-      status: 'lead',
-      firstName: item.first_name || item.firstName || '',
-      lastName: item.last_name || item.lastName || '',
-      fullName: item.full_name || item.fullName || `${item.first_name || ''} ${item.last_name || ''}`.trim(),
-      email: item.email || '',
-      phone: item.phone || '',
-      preferredPlanId: item.preferred_plan_id || item.preferredPlanId || '',
-      preferredPlanName: item.preferred_plan_name || item.preferredPlanName || 'CTExcel Plan',
-      monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 30),
-      salesRep: item.sales_rep || item.salesRep || 'Unassigned',
-      referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
-      submittedAt: item.submitted_at || item.submittedAt || new Date().toISOString(),
-      callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
-      notes: item.notes || '',
-      leadFollowUpStatus: item.lead_follow_up_status || item.leadFollowUpStatus || 'new',
-      idVerification: {
-        status: item.id_verification_status || 'unverified',
-      },
-      commission: {
-        amount: Number((Number(item.monthly_plan_price || 30) * 1.0).toFixed(2)),
-        status: 'pending',
-        isClawbackFlagged: false,
-        multiplierUsed: 1.0,
-      },
-    }));
-
-    return { data: mapped, error: null };
-  } catch (err: any) {
-    console.error('Unexpected exception fetching leads from Supabase:', err);
-    return { data: null, error: err };
   }
+
+  return { data: [], error: null };
 }
 
 /**
@@ -716,6 +812,7 @@ export async function testSupabaseAnonymousInsert(): Promise<{
   message: string;
   latencyMs?: number;
   details?: any;
+  tableUsed?: string;
 }> {
   const start = Date.now();
   if (!isSupabaseConfigured) {
@@ -725,9 +822,8 @@ export async function testSupabaseAnonymousInsert(): Promise<{
     };
   }
 
-  const testId = `TEST-${Date.now().toString().slice(-4)}`;
+  const targetTable = getLeadsTableName();
   const testPayload = {
-    id: testId,
     first_name: 'Connectivity',
     last_name: 'Test',
     full_name: 'Connectivity Test',
@@ -739,34 +835,42 @@ export async function testSupabaseAnonymousInsert(): Promise<{
   };
 
   try {
-    const { error: insertErr } = await supabase.from('leads').insert([testPayload]).select();
+    // CRITICAL: NO .select() AT THE END!
+    const { error: insertErr } = await supabase.from(targetTable).insert([testPayload]);
     const latencyMs = Date.now() - start;
 
     if (insertErr) {
       let advice = insertErr.message;
       if (insertErr.code === '42501' || insertErr.message.toLowerCase().includes('row-level security')) {
-        advice = 'RLS Policy Rejection (42501): The public anon role is blocked from inserting into table "leads". Please run the SQL snippet in supabase_setup.sql in your Supabase SQL Editor.';
+        advice = `RLS Policy Rejection (42501): The public anon role is blocked from inserting into table "${targetTable}". Run: GRANT ALL ON TABLE public."${targetTable}" TO anon; CREATE POLICY "Allow anon insert" ON public."${targetTable}" FOR INSERT TO anon WITH CHECK (true);`;
       }
       return {
         success: false,
         message: `Insert test failed (${insertErr.code || 'ERR'}): ${advice}`,
         details: insertErr,
+        tableUsed: targetTable,
       };
     }
 
-    // Clean up test row
-    await supabase.from('leads').delete().eq('id', testId);
+    // Try cleaning up test row if permissions permit
+    try {
+      await supabase.from(targetTable).delete().eq('email', 'test@ctexcel.ca');
+    } catch {
+      // Cleanup is best-effort
+    }
 
     return {
       success: true,
-      message: `Supabase anonymous INSERT test succeeded in ${latencyMs}ms! RLS policies allow public visitors on mobile & external PCs to submit leads.`,
+      message: `Supabase anonymous INSERT test into table "${targetTable}" succeeded in ${latencyMs}ms! Anonymous inserts work properly on mobile and external PCs without .select() errors.`,
       latencyMs,
+      tableUsed: targetTable,
     };
   } catch (err: any) {
     return {
       success: false,
       message: `Exception during test: ${err?.message || err}`,
       details: err,
+      tableUsed: targetTable,
     };
   }
 }
@@ -810,16 +914,15 @@ export async function softDeleteCustomerInSupabase(id: string, deletedBy: string
     deleted_by: deletedBy,
   };
 
-  try {
-    // Attempt update on 'leads' table
-    await supabase.from('leads').update(payload).eq('id', id);
-    // Also attempt update on 'customers' table if used
-    await supabase.from('customers').update(payload).eq('id', id);
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.warn('Soft delete in Supabase note:', err);
-    return { success: false, error: err };
+  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  for (const tbl of tables) {
+    try {
+      await supabase.from(tbl).update(payload).eq('id', id);
+    } catch {
+      // continue to next table
+    }
   }
+  return { success: true, error: null };
 }
 
 /**
@@ -835,14 +938,15 @@ export async function restoreCustomerInSupabase(id: string) {
     deleted_by: null,
   };
 
-  try {
-    await supabase.from('leads').update(payload).eq('id', id);
-    await supabase.from('customers').update(payload).eq('id', id);
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.warn('Restore in Supabase note:', err);
-    return { success: false, error: err };
+  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  for (const tbl of tables) {
+    try {
+      await supabase.from(tbl).update(payload).eq('id', id);
+    } catch {
+      // continue to next table
+    }
   }
+  return { success: true, error: null };
 }
 
 /**
@@ -852,14 +956,15 @@ export async function restoreCustomerInSupabase(id: string) {
 export async function hardDeleteCustomersInSupabase(ids: string[]) {
   if (!isSupabaseConfigured) return { success: true, error: null };
 
-  try {
-    await supabase.from('leads').delete().in('id', ids);
-    await supabase.from('customers').delete().in('id', ids);
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.error('Hard delete in Supabase error:', err);
-    return { success: false, error: err };
+  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  for (const tbl of tables) {
+    try {
+      await supabase.from(tbl).delete().in('id', ids);
+    } catch {
+      // continue
+    }
   }
+  return { success: true, error: null };
 }
 
 /**

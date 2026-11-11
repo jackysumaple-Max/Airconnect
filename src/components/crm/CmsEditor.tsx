@@ -35,6 +35,8 @@ import {
   isSupabaseConfigured,
   supabaseUrl,
   supabaseAnonKey,
+  getLeadsTableName,
+  setLeadsTableName,
 } from '../../services/supabase';
 
 interface CmsEditorProps {
@@ -109,6 +111,7 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
   const [showDbSettings, setShowDbSettings] = useState(false);
   const [customSupabaseUrl, setCustomSupabaseUrl] = useState(supabaseUrl);
   const [customSupabaseAnonKey, setCustomSupabaseAnonKey] = useState(supabaseAnonKey);
+  const [targetTableName, setTargetTableNameState] = useState(getLeadsTableName());
   const [dbSettingsSaved, setDbSettingsSaved] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
 
@@ -118,17 +121,18 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
     { label: 'Frosted Emerald Glass (Default Style #2)', path: '/assets/aistudio/image_8a94fde1.png' },
   ];
 
-  const RLS_SQL_SNIPPET = `-- Fix Bug 1: Allow public & external devices to insert leads
+  const RLS_SQL_SNIPPET = `-- Fix Production Lead Submission: Allow public anon role to insert into "${targetTableName || 'Airwireless'}"
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;
-ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON TABLE public."${targetTableName || 'Airwireless'}" TO anon, authenticated, service_role;
+ALTER TABLE public."${targetTableName || 'Airwireless'}" ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Allow anonymous lead insert" ON public.leads;
-CREATE POLICY "Allow anonymous lead insert" ON public.leads
+DROP POLICY IF EXISTS "Allow anon insert" ON public."${targetTableName || 'Airwireless'}";
+CREATE POLICY "Allow anon insert" ON public."${targetTableName || 'Airwireless'}"
     FOR INSERT TO anon, authenticated, public WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Allow staff to select leads" ON public.leads;
-CREATE POLICY "Allow staff to select leads" ON public.leads
+-- Optional: Allow staff to view leads
+DROP POLICY IF EXISTS "Allow staff to select leads" ON public."${targetTableName || 'Airwireless'}";
+CREATE POLICY "Allow staff to select leads" ON public."${targetTableName || 'Airwireless'}"
     FOR SELECT TO anon, authenticated, public USING (true);`;
 
   const handleCopySql = () => {
@@ -156,6 +160,7 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
   const handleSaveCustomCredentials = (e: React.FormEvent) => {
     e.preventDefault();
     setCustomSupabaseCredentials(customSupabaseUrl, customSupabaseAnonKey);
+    setLeadsTableName(targetTableName);
     setDbSettingsSaved(true);
     setTimeout(() => setDbSettingsSaved(false), 3000);
   };
@@ -869,6 +874,13 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
           </div>
 
           <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Target Leads Table</span>
+            <div className="mt-1 font-mono text-[11px] text-emerald-800 font-bold truncate">
+              {targetTableName || 'Airwireless'}
+            </div>
+          </div>
+
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
             <span className="text-[10px] font-bold text-slate-500 uppercase">Supabase Endpoint URL</span>
             <div className="mt-1 font-mono text-[11px] text-slate-800 truncate" title={supabaseUrl}>
               {supabaseUrl || '(missing in build)'}
@@ -908,7 +920,7 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
         <div className="rounded-xl border border-slate-200 bg-slate-900 text-slate-100 p-4 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-emerald-400">
-              Required RLS Policy SQL for Supabase SQL Editor
+              Required RLS Policy SQL for Supabase SQL Editor (Table: {targetTableName || 'Airwireless'})
             </span>
             <button
               type="button"
@@ -920,7 +932,7 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
             </button>
           </div>
           <p className="text-[11px] text-slate-400">
-            Run this in your Supabase SQL Editor to allow public mobile visitors to insert callback requests without error:
+            Run this in your Supabase SQL Editor to allow public mobile visitors to insert callback requests into <strong>{targetTableName || 'Airwireless'}</strong> without error:
           </p>
           <pre className="text-[11px] font-mono bg-black/50 p-2.5 rounded overflow-x-auto text-emerald-300">
             {RLS_SQL_SNIPPET}
@@ -932,7 +944,7 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3 animate-fade-in">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-indigo-950">
-                Production Key Override (Hostinger / Custom Domain)
+                Production Database & Table Override
               </span>
               {dbSettingsSaved && (
                 <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
@@ -940,7 +952,17 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Target Leads Table</label>
+                <input
+                  type="text"
+                  value={targetTableName}
+                  onChange={(e) => setTargetTableNameState(e.target.value)}
+                  placeholder="Airwireless"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2 font-mono"
+                />
+              </div>
               <div>
                 <label className="block text-slate-700 font-semibold mb-1">VITE_SUPABASE_URL</label>
                 <input
@@ -968,7 +990,7 @@ CREATE POLICY "Allow staff to select leads" ON public.leads
                 onClick={handleSaveCustomCredentials}
                 className="rounded-lg bg-indigo-600 text-white font-bold px-4 py-1.5 text-xs hover:bg-indigo-700"
               >
-                Apply Database Credentials
+                Apply Database Settings
               </button>
             </div>
           </div>

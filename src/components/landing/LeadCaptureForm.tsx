@@ -37,6 +37,13 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedLead, setSubmittedLead] = useState<CustomerRecord | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [detailedError, setDetailedError] = useState<{
+    message: string;
+    details?: string | null;
+    hint?: string | null;
+    code?: string | null;
+    table?: string | null;
+  } | null>(null);
 
   const activePlans = plans.filter((p) => p.active);
   const currentPlan = activePlans.find((p) => p.id === selectedPlanId) || activePlans[0];
@@ -44,6 +51,7 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setDetailedError(null);
 
     if (!firstName.trim() || !lastName.trim()) {
       setErrorMessage('Please enter both your first and last name.');
@@ -80,7 +88,15 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
       setIsSubmitting(false);
     } catch (err: any) {
       console.error('Lead form submission failed (Frontend to Backend):', err);
-      setErrorMessage(err?.message || 'An unexpected error occurred while saving your callback request. Please try again.');
+      const errMsg = err?.message || 'Database rejected the submission.';
+      setErrorMessage(errMsg);
+      setDetailedError({
+        message: errMsg,
+        details: err?.details || null,
+        hint: err?.hint || null,
+        code: err?.code || null,
+        table: err?.table || 'Airwireless',
+      });
       setIsSubmitting(false);
     }
   };
@@ -94,6 +110,7 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
     setReferralSource('');
     setSubmittedLead(null);
     setErrorMessage('');
+    setDetailedError(null);
   };
 
   return (
@@ -415,6 +432,81 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
                       <ArrowRight className="h-4 w-4 text-white/70" />
                     </button>
                   </div>
+
+                  {/* Red Alert Box: Surfacing Exact Supabase Database Error directly under Submit Button */}
+                  {detailedError && (
+                    <div className="mt-3 rounded-2xl border-2 border-red-500 bg-red-50 p-4 text-left shadow-lg animate-shake">
+                      <div className="flex items-start gap-3">
+                        <div className="rounded-xl bg-red-100 p-2 text-red-700 shrink-0 mt-0.5">
+                          <AlertCircle className="h-5 w-5 text-red-600" />
+                        </div>
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-1 border-b border-red-200 pb-2">
+                            <span className="text-xs font-bold uppercase tracking-wider text-red-900">
+                              Supabase Database Rejection
+                            </span>
+                            <span className="font-mono text-[11px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded">
+                              Table: {detailedError.table || 'Airwireless'}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-red-600">error.message:</span>
+                            <p className="text-xs font-semibold text-red-950 font-mono break-words bg-red-100/70 p-2.5 rounded mt-0.5">
+                              {detailedError.message}
+                            </p>
+                          </div>
+
+                          {detailedError.details && (
+                            <div>
+                              <span className="text-[10px] font-bold uppercase text-red-600">error.details:</span>
+                              <p className="text-xs text-red-900 font-mono break-words bg-red-100/70 p-2.5 rounded mt-0.5">
+                                {detailedError.details}
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-red-700">
+                            {detailedError.code && (
+                              <span className="font-mono bg-red-200/80 text-red-950 px-2 py-0.5 rounded font-bold">
+                                Code: {detailedError.code}
+                              </span>
+                            )}
+                            {detailedError.hint && (
+                              <span className="italic text-red-800">
+                                Hint: {detailedError.hint}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Quick Troubleshooting Note */}
+                          <div className="mt-2 border-t border-red-200/80 pt-2 text-[11px] text-red-800 space-y-1">
+                            {detailedError.code === '42501' || detailedError.message?.toLowerCase().includes('row-level security') ? (
+                              <div>
+                                <p className="font-semibold text-red-900">
+                                  RLS Policy Rejection (42501): The public anon role is blocked from inserting into table <code>{detailedError.table}</code>.
+                                </p>
+                                <p className="text-[10px] text-red-700 mt-1">
+                                  Run this in your Supabase SQL Editor:
+                                </p>
+                                <pre className="font-mono bg-slate-900 text-emerald-300 p-2.5 rounded text-[10px] overflow-x-auto mt-1">
+{`GRANT ALL ON TABLE public."${detailedError.table || 'Airwireless'}" TO anon, authenticated, service_role;\nCREATE POLICY "Allow anon insert" ON public."${detailedError.table || 'Airwireless'}"\n  FOR INSERT TO anon, authenticated, public WITH CHECK (true);`}
+                                </pre>
+                              </div>
+                            ) : detailedError.code === '42P01' || detailedError.message?.toLowerCase().includes('does not exist') ? (
+                              <p>
+                                ⚠️ Table <strong>"{detailedError.table}"</strong> was not found in Supabase. Check the table name spelling in your Supabase dashboard.
+                              </p>
+                            ) : (
+                              <p>
+                                ⚠️ Please verify that table <strong>"{detailedError.table}"</strong> has columns for the submitted lead data.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Privacy / Low Friction Notice */}
                   <p className="text-center text-[11px] text-slate-400">
