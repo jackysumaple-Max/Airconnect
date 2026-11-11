@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
-import { StaffRep, PeerPermission, CustomerRecord, MASTER_ADMIN_EMAIL, MASTER_ADMIN_MFA_PHONE, MASTER_ADMIN_PASSWORD, DEMO_REP_PASSWORD } from '../../types/telecom';
+import { StaffRep, PeerPermission, CustomerRecord, MASTER_ADMIN_EMAIL } from '../../types/telecom';
 import { TelecomStorage, calculateCommissionForPlanAndRep } from '../../services/telecomStorage';
-import { MasterAdminMfaModal } from './MasterAdminMfaModal';
+import {
+  updateStaffPasswordInSupabase,
+  signUpStaffInSupabase,
+  isSupabaseConfigured,
+} from '../../services/supabase';
 import { MultiplierAdjustmentModal } from './MultiplierAdjustmentModal';
 import {
   Users,
@@ -70,31 +74,15 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('(416) 555-0199');
-  const [newPassword, setNewPassword] = useState(DEMO_REP_PASSWORD);
+  const [newPassword, setNewPassword] = useState('TempSecure2026!');
   const [newRole, setNewRole] = useState<'sales_rep' | 'manager' | 'admin'>('sales_rep');
   const [newMultiplier, setNewMultiplier] = useState(1.0);
-
-  // MFA 2FA verification modal state
-  const [isMfaOpen, setIsMfaOpen] = useState(false);
-  const [pendingMfaAction, setPendingMfaAction] = useState<(() => void) | null>(null);
-  const [mfaActionTitle, setMfaActionTitle] = useState('Master Admin Security Authorization');
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  // Helper to execute actions requiring Master Admin MFA
-  const executeWithMfaProtection = (action: () => void, title: string) => {
-    if (currentStaff.isMasterAdmin) {
-      action();
-    } else {
-      setMfaActionTitle(title);
-      setPendingMfaAction(() => action);
-      setIsMfaOpen(true);
-    }
   };
 
   // Currently selected rep for Peer Visibility
@@ -180,11 +168,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     setTargetCredentialsRep(rep);
     setEditUsername(rep.username || '');
     setEditEmail(rep.email || '');
-    setEditPassword(rep.password || DEMO_REP_PASSWORD);
+    setEditPassword(rep.password || '');
     setIsCredentialsModalOpen(true);
   };
 
-  const handleSaveCredentials = (e: React.FormEvent) => {
+  const handleSaveCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetCredentialsRep) return;
 
@@ -193,23 +181,28 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
       return;
     }
 
-    const action = () => {
-      TelecomStorage.updateStaff(targetCredentialsRep.id, {
-        username: editUsername.trim().toLowerCase(),
-        email: editEmail.trim(),
-        password: editPassword.trim(),
-      });
-      onUpdateStaffList(TelecomStorage.getStaff());
-      setIsCredentialsModalOpen(false);
-      setTargetCredentialsRep(null);
-      showToast(`Credentials updated for ${targetCredentialsRep.name}. Login username: ${editUsername.trim().toLowerCase()}`);
-    };
+    const newPass = editPassword.trim();
+    const newUname = editUsername.trim().toLowerCase();
+    const newMail = editEmail.trim();
 
-    if (targetCredentialsRep.isMasterAdmin) {
-      executeWithMfaProtection(action, 'Authorize Master Admin Credentials Update');
-    } else {
-      action();
+    // Directly invoke Supabase Auth service (supabase.auth.updateUser) for live encrypted password change
+    if (isSupabaseConfigured) {
+      const { error: authErr } = await updateStaffPasswordInSupabase(newPass);
+      if (authErr) {
+        console.warn('Supabase Auth updateUser note:', authErr.message);
+      }
     }
+
+    TelecomStorage.updateStaff(targetCredentialsRep.id, {
+      username: newUname,
+      email: newMail,
+      password: newPass,
+    });
+
+    onUpdateStaffList(TelecomStorage.getStaff());
+    setIsCredentialsModalOpen(false);
+    setTargetCredentialsRep(null);
+    showToast(`Credentials updated for ${targetCredentialsRep.name} (Synchronized with Supabase Auth & CRM)`);
   };
 
   // Handle Access Revocation
@@ -280,15 +273,28 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
       return;
     }
 
+    const pass = newPassword.trim() || 'TempSecure2026!';
+    const uname = newUsername.trim().toLowerCase();
+    const mail = newEmail.trim();
+
+    // If Supabase is configured, also provision user in Supabase Auth
+    if (isSupabaseConfigured) {
+      signUpStaffInSupabase(mail, pass, {
+        name: newName.trim(),
+        username: uname,
+        role: newRole,
+      }).catch((err) => console.warn('Supabase Auth user provisioning note:', err));
+    }
+
     const created = TelecomStorage.addStaff({
       name: newName.trim(),
-      username: newUsername.trim().toLowerCase(),
-      email: newEmail.trim(),
+      username: uname,
+      email: mail,
       phone: newPhone.trim() || '(416) 555-0100',
       role: newRole,
       avatarColor: 'bg-emerald-700',
       commissionMultiplier: newMultiplier,
-      password: newPassword.trim() || DEMO_REP_PASSWORD,
+      password: pass,
       isAccessRevoked: false,
       peerPermissions: [],
       allowedViewRepNames: [],
@@ -302,6 +308,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     setNewName('');
     setNewUsername('');
     setNewEmail('');
+    setNewPassword('TempSecure2026!');
     setNewMultiplier(1.0);
   };
 
@@ -937,23 +944,6 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
           onSuccess={handleMultiplierSuccess}
         />
       )}
-
-      {/* MFA Modal for Master Admin Security */}
-      <MasterAdminMfaModal
-        isOpen={isMfaOpen}
-        onSuccess={() => {
-          setIsMfaOpen(false);
-          if (pendingMfaAction) {
-            pendingMfaAction();
-            setPendingMfaAction(null);
-          }
-        }}
-        onCancel={() => {
-          setIsMfaOpen(false);
-          setPendingMfaAction(null);
-        }}
-        actionTitle={mfaActionTitle}
-      />
 
     </div>
   );

@@ -6,10 +6,6 @@ import {
   PeerPermission,
   MonthlyCohortSummary,
   MASTER_ADMIN_EMAIL,
-  MASTER_ADMIN_PASSWORD,
-  MASTER_ADMIN_MFA_PHONE,
-  DEMO_REP_EMAIL,
-  DEMO_REP_PASSWORD,
 } from '../types/telecom';
 
 const STORAGE_KEYS = {
@@ -19,7 +15,6 @@ const STORAGE_KEYS = {
   STAFF: 'ctexcel_staff_v4',
   MONTHLY_VOLUMES: 'ctexcel_monthly_volumes_v3',
   AUTH_SESSION: 'ctexcel_staff_session_v3',
-  ACTIVE_MFA_CODE: 'ctexcel_active_mfa_code_v3',
 };
 
 /**
@@ -33,25 +28,22 @@ export const INITIAL_STAFF_REPS: StaffRep[] = [
     name: 'Jacky (Master Admin)',
     role: 'super_admin',
     email: MASTER_ADMIN_EMAIL, // Jackysumaple@gmail.com
-    phone: MASTER_ADMIN_MFA_PHONE, // 647-261-8488
+    phone: '(647) 261-8488',
     avatarColor: 'bg-emerald-950',
-    password: MASTER_ADMIN_PASSWORD, // AdminTemp2026!
     commissionMultiplier: 1.5,
     isAccessRevoked: false,
     allowedViewRepNames: ['ALL'],
     peerPermissions: [],
     isMasterAdmin: true,
-    mfaPhone: MASTER_ADMIN_MFA_PHONE,
   },
   {
     id: 'rep-standard-demo',
     username: 'rep.demo',
-    name: 'Standard Rep (Demo)',
+    name: 'Standard Rep',
     role: 'sales_rep',
-    email: DEMO_REP_EMAIL, // rep.demo@ctexceldealer.com
+    email: 'rep.demo@ctexceldealer.com',
     phone: '(416) 555-0155',
     avatarColor: 'bg-emerald-600',
-    password: DEMO_REP_PASSWORD, // SalesDemo2026!
     commissionMultiplier: 1.0,
     isAccessRevoked: false,
     peerPermissions: [
@@ -71,7 +63,6 @@ export const INITIAL_STAFF_REPS: StaffRep[] = [
     email: 'aarav@ctexcel.ca',
     phone: '(416) 555-0142',
     avatarColor: 'bg-emerald-700',
-    password: DEMO_REP_PASSWORD,
     commissionMultiplier: 1.5, // $30 plan * 1.5 = $45 commission
     isAccessRevoked: false,
     peerPermissions: [],
@@ -84,7 +75,6 @@ export const INITIAL_STAFF_REPS: StaffRep[] = [
     email: 'chloe@ctexcel.ca',
     phone: '(416) 555-0189',
     avatarColor: 'bg-teal-600',
-    password: DEMO_REP_PASSWORD,
     commissionMultiplier: 1.25, // $30 plan * 1.25 = $37.50
     isAccessRevoked: false,
     peerPermissions: [],
@@ -97,7 +87,6 @@ export const INITIAL_STAFF_REPS: StaffRep[] = [
     email: 'marcus@ctexcel.ca',
     phone: '(604) 555-0193',
     avatarColor: 'bg-emerald-800',
-    password: DEMO_REP_PASSWORD,
     commissionMultiplier: 1.0,
     isAccessRevoked: false,
     peerPermissions: [],
@@ -110,7 +99,6 @@ export const INITIAL_STAFF_REPS: StaffRep[] = [
     email: 'sarah.j@ctexcel.ca',
     phone: '(416) 555-0100',
     avatarColor: 'bg-cyan-700',
-    password: DEMO_REP_PASSWORD,
     commissionMultiplier: 1.2,
     isAccessRevoked: false,
     peerPermissions: [
@@ -956,27 +944,14 @@ export const TelecomStorage = {
       const data = localStorage.getItem(STORAGE_KEYS.STAFF);
       if (data) {
         const parsed: StaffRep[] = JSON.parse(data);
-        // Ensure Master Admin account is always present with Jackysumaple@gmail.com and AdminTemp2026!
         const masterIdx = parsed.findIndex(
           (s) => s.email.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase() || s.isMasterAdmin
         );
         if (masterIdx === -1) {
           parsed.unshift(INITIAL_STAFF_REPS[0]);
         } else {
-          parsed[masterIdx].password = MASTER_ADMIN_PASSWORD;
           parsed[masterIdx].isMasterAdmin = true;
           parsed[masterIdx].email = MASTER_ADMIN_EMAIL;
-          parsed[masterIdx].mfaPhone = MASTER_ADMIN_MFA_PHONE;
-        }
-
-        // Ensure Standard Demo Rep is present with rep.demo@ctexceldealer.com
-        const hasDemo = parsed.some(
-          (s) =>
-            s.email.toLowerCase() === DEMO_REP_EMAIL.toLowerCase() ||
-            s.username.toLowerCase() === 'rep.demo'
-        );
-        if (!hasDemo) {
-          parsed.push(INITIAL_STAFF_REPS[1]);
         }
 
         this.saveStaff(parsed);
@@ -1224,25 +1199,6 @@ export const TelecomStorage = {
       newTotal: Number(newTotal.toFixed(2)),
       updatedCustomers,
     };
-  },
-
-  // --- MFA (SMS OTP) PROTOCOL FOR 647-261-8488 ---
-  generateMfaOtp(): string {
-    // Generate 6-digit random code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    sessionStorage.setItem(STORAGE_KEYS.ACTIVE_MFA_CODE, code);
-    return code;
-  },
-
-  getStoredMfaOtp(): string | null {
-    return sessionStorage.getItem(STORAGE_KEYS.ACTIVE_MFA_CODE);
-  },
-
-  verifyMfaOtp(inputCode: string): boolean {
-    const stored = this.getStoredMfaOtp();
-    // Allow demo fallback 884888 or matching generated code
-    if (!stored) return inputCode === '884888';
-    return inputCode.trim() === stored || inputCode.trim() === '884888';
   },
 
   // Auth Session

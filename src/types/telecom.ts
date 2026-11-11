@@ -9,11 +9,6 @@ export type IdVerificationStatus = 'unverified' | 'pending' | 'verified' | 'fail
 export type RoamingScope = 'China-Canada' | 'China-US-Canada-Mexico';
 
 export const MASTER_ADMIN_EMAIL = 'Jackysumaple@gmail.com';
-export const MASTER_ADMIN_PASSWORD = 'AdminTemp2026!';
-export const MASTER_ADMIN_MFA_PHONE = '647-261-8488';
-
-export const DEMO_REP_EMAIL = 'rep.demo@ctexceldealer.com';
-export const DEMO_REP_PASSWORD = 'SalesDemo2026!';
 
 export interface PeerPermission {
   peerName: string; // Name of the peer sales rep (e.g., 'Chloe Martin')
@@ -159,5 +154,4 @@ export interface StaffRep {
   allowedViewRepNames?: string[]; // Legacy fallback
   peerPermissions?: PeerPermission[]; // Granular peer visibility toggles: [Leads, Active Lines, Non-Active Lines]
   isMasterAdmin?: boolean; // Strictly bound to Jackysumaple@gmail.com
-  mfaPhone?: string; // e.g. '647-261-8488'
 }
