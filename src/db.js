@@ -12,6 +12,9 @@ import {
   signUpStaffInSupabase,
   getCurrentSupabaseUser,
   signOutFromSupabase,
+  insertLeadToSupabase,
+  fetchLeadsFromSupabase,
+  deleteStaffFromSupabase,
 } from './services/supabase';
 
 export {
@@ -24,6 +27,9 @@ export {
   signUpStaffInSupabase,
   getCurrentSupabaseUser,
   signOutFromSupabase,
+  insertLeadToSupabase,
+  fetchLeadsFromSupabase,
+  deleteStaffFromSupabase,
 };
 
 export default supabase;

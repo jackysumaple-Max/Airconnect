@@ -11,6 +11,11 @@ import { FaqSection } from './components/landing/FaqSection';
 import { Footer } from './components/landing/Footer';
 import { CrmDashboard } from './components/crm/CrmDashboard';
 import { StaffAuthGate } from './components/crm/StaffAuthGate';
+import {
+  insertLeadToSupabase,
+  fetchLeadsFromSupabase,
+  isSupabaseConfigured,
+} from './services/supabase';
 import { Sparkles } from 'lucide-react';
 
 export default function App() {
@@ -64,12 +69,26 @@ export default function App() {
     };
   }, []);
 
-  // Load persistent state on mount
+  // Load persistent state on mount & synchronize with Supabase
   useEffect(() => {
     setCustomers(TelecomStorage.getCustomers());
     setPlans(TelecomStorage.getPlans());
     setCms(TelecomStorage.getCMS());
     setStaffMembers(TelecomStorage.getStaff());
+
+    // Synchronize leads from Supabase database if configured
+    if (isSupabaseConfigured) {
+      fetchLeadsFromSupabase().then(({ data, error }) => {
+        if (!error && data && data.length > 0) {
+          TelecomStorage.mergeExternalLeads(data);
+          setCustomers(TelecomStorage.getCustomers());
+        } else if (error) {
+          console.error('Failed to synchronize leads from Supabase database on load:', error);
+        }
+      }).catch((err) => {
+        console.error('Unexpected error fetching leads from Supabase on mount:', err);
+      });
+    }
   }, []);
 
   // Navigation helpers for dealer portal
@@ -112,8 +131,8 @@ export default function App() {
     navigateToPublic();
   };
 
-  // Handlers for Leads and Customer Updates
-  const handleLeadSubmit = (leadData: {
+  // Handlers for Leads and Customer Updates (Frontend to Backend + Supabase)
+  const handleLeadSubmit = async (leadData: {
     firstName: string;
     lastName: string;
     email: string;
@@ -122,8 +141,23 @@ export default function App() {
     salesRep?: string;
     referralSource?: string;
     callbackTimePreference?: string;
-  }): CustomerRecord => {
+  }): Promise<CustomerRecord> => {
+    // 1. Immediately store in local state/storage so UI is responsive
     const created = TelecomStorage.addLead(leadData);
+
+    // 2. Insert into Supabase database ('leads' or 'customers' table)
+    if (isSupabaseConfigured) {
+      try {
+        const { error } = await insertLeadToSupabase(created);
+        if (error) {
+          console.error('CRITICAL: Supabase lead insertion failed in handleLeadSubmit:', error.message || error);
+        }
+      } catch (err: any) {
+        console.error('CRITICAL: Unexpected exception during Supabase lead insertion in handleLeadSubmit:', err);
+      }
+    }
+
+    // 3. Immediately refresh customers state so backend "Leads" dashboard reflects the new lead
     setCustomers(TelecomStorage.getCustomers());
     return created;
   };

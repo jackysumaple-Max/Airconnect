@@ -743,6 +743,7 @@ export const TelecomStorage = {
     email: string;
     phone: string;
     preferredPlanId: string;
+    salesRep?: string;
     referralSource?: string;
     notes?: string;
     callbackTimePreference?: string;
@@ -762,7 +763,7 @@ export const TelecomStorage = {
       preferredPlanId: plan.id,
       preferredPlanName: `${plan.name} (${plan.roamingHighlight})`,
       monthlyPlanPrice: plan.monthlyPrice,
-      salesRep: 'Unassigned', // Enters Master Unassigned Pool!
+      salesRep: lead.salesRep?.trim() || 'Unassigned',
       referralSource: lead.referralSource?.trim() || 'CTExcel Lead Form',
       submittedAt: new Date().toISOString(),
       callbackTimePreference: lead.callbackTimePreference || 'As soon as possible',
@@ -782,6 +783,30 @@ export const TelecomStorage = {
     customers.unshift(newRecord);
     this.saveCustomers(customers);
     return newRecord;
+  },
+
+  /**
+   * Synchronize / merge leads fetched from Supabase database into local customer store
+   */
+  mergeExternalLeads(externalLeads: CustomerRecord[]): CustomerRecord[] {
+    const local = this.getCustomers();
+    const localIds = new Set(local.map((c) => c.id));
+    const toAdd: CustomerRecord[] = [];
+
+    for (const ext of externalLeads) {
+      if (!localIds.has(ext.id)) {
+        toAdd.push(ext);
+        localIds.add(ext.id);
+      }
+    }
+
+    if (toAdd.length > 0) {
+      const merged = [...toAdd, ...local];
+      this.saveCustomers(merged);
+      return merged;
+    }
+
+    return local;
   },
 
   /**

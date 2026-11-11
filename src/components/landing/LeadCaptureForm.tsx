@@ -15,7 +15,7 @@ interface LeadCaptureFormProps {
     salesRep?: string;
     referralSource?: string;
     callbackTimePreference?: string;
-  }) => CustomerRecord;
+  }) => Promise<CustomerRecord> | CustomerRecord;
   onViewInCrm: () => void;
 }
 
@@ -41,7 +41,7 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
   const activePlans = plans.filter((p) => p.active);
   const currentPlan = activePlans.find((p) => p.id === selectedPlanId) || activePlans[0];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -65,22 +65,22 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
     setIsSubmitting(true);
 
     try {
-      const createdRecord = onSubmitLead({
+      const createdRecord = await onSubmitLead({
         firstName,
         lastName,
         email,
         phone,
         preferredPlanId: selectedPlanId || currentPlan?.id,
-        salesRep: salesRep.trim() || 'Aarav Patel',
+        salesRep: salesRep.trim() || 'Unassigned',
         referralSource: referralSource.trim() || 'Website Lead Capture',
         callbackTimePreference: callbackTime,
       });
 
       setSubmittedLead(createdRecord);
       setIsSubmitting(false);
-    } catch (err) {
-      console.error(err);
-      setErrorMessage('An unexpected error occurred. Please try again.');
+    } catch (err: any) {
+      console.error('Lead form submission failed (Frontend to Backend):', err);
+      setErrorMessage(err?.message || 'An unexpected error occurred while saving your callback request. Please try again.');
       setIsSubmitting(false);
     }
   };

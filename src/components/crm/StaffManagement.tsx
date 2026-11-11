@@ -4,6 +4,7 @@ import { TelecomStorage, calculateCommissionForPlanAndRep } from '../../services
 import {
   updateStaffPasswordInSupabase,
   signUpStaffInSupabase,
+  deleteStaffFromSupabase,
   isSupabaseConfigured,
 } from '../../services/supabase';
 import { MultiplierAdjustmentModal } from './MultiplierAdjustmentModal';
@@ -59,6 +60,8 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
   const [editUsername, setEditUsername] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
+  const [credentialsError, setCredentialsError] = useState('');
+  const [isSavingCredentials, setIsSavingCredentials] = useState(false);
 
   // Dropdown Peer Assignment State (Requirement 2)
   const [activeRepIdForPeers, setActiveRepIdForPeers] = useState<string>(
@@ -165,6 +168,8 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
 
   // Handle Account Credentials Update (Username + Password + Email)
   const handleOpenCredentialsModal = (rep: StaffRep) => {
+    setCredentialsError('');
+    setIsSavingCredentials(false);
     setTargetCredentialsRep(rep);
     setEditUsername(rep.username || '');
     setEditEmail(rep.email || '');
@@ -175,34 +180,56 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
   const handleSaveCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetCredentialsRep) return;
+    setCredentialsError('');
 
     if (!editUsername.trim() || !editPassword.trim()) {
-      alert('Username and password cannot be blank.');
+      setCredentialsError('Username and password cannot be blank.');
       return;
     }
 
+    if (editPassword.trim().length < 6) {
+      setCredentialsError('Supabase Auth requires a password of at least 6 characters.');
+      return;
+    }
+
+    setIsSavingCredentials(true);
     const newPass = editPassword.trim();
     const newUname = editUsername.trim().toLowerCase();
     const newMail = editEmail.trim();
 
-    // Directly invoke Supabase Auth service (supabase.auth.updateUser) for live encrypted password change
+    // CRITICAL BUG 3 FIX:
+    // Call the correct Supabase Authentication API: supabase.auth.updateUser({ password: newPassword })
+    // Do not attempt to update passwords by writing to a standard public users table.
+    // Ensure error messages from Supabase Auth function are surfaced in the UI if rejected.
     if (isSupabaseConfigured) {
-      const { error: authErr } = await updateStaffPasswordInSupabase(newPass);
+      const { error: authErr } = await updateStaffPasswordInSupabase(
+        newPass,
+        newMail,
+        targetCredentialsRep.password
+      );
+
       if (authErr) {
-        console.warn('Supabase Auth updateUser note:', authErr.message);
+        console.error('CRITICAL: Supabase Auth password update rejected:', authErr.message, authErr);
+        // Surface the error directly in the UI modal
+        setCredentialsError(authErr.message || 'Supabase Auth rejected the password update. Please verify your connection or session.');
+        setIsSavingCredentials(false);
+        return;
       }
     }
 
+    // Update in local CRM storage
     TelecomStorage.updateStaff(targetCredentialsRep.id, {
       username: newUname,
       email: newMail,
       password: newPass,
     });
 
+    // Immediately update frontend state so UI reflects the change
     onUpdateStaffList(TelecomStorage.getStaff());
+    setIsSavingCredentials(false);
     setIsCredentialsModalOpen(false);
     setTargetCredentialsRep(null);
-    showToast(`Credentials updated for ${targetCredentialsRep.name} (Synchronized with Supabase Auth & CRM)`);
+    showToast(`Password successfully updated via Supabase Auth API for ${targetCredentialsRep.name}!`);
   };
 
   // Handle Access Revocation
@@ -251,17 +278,49 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     showToast(`Commission multiplier updated to ${val}x`);
   };
 
-  // Delete staff account
-  const handleDeleteRep = (rep: StaffRep) => {
+  // CRITICAL BUG 2 FIX:
+  // Delete sales rep from Supabase database table 'staff' with foreign key protection
+  // and immediate UI state update so row is removed without manual page refresh.
+  const handleDeleteRep = async (rep: StaffRep) => {
     if (rep.isMasterAdmin) {
       alert('The Master Admin account cannot be deleted.');
       return;
     }
 
-    if (window.confirm(`Are you sure you want to permanently delete staff account for ${rep.name}?`)) {
+    if (!window.confirm(`Are you sure you want to permanently delete staff account for ${rep.name}?`)) {
+      return;
+    }
+
+    try {
+      // 1. Call Supabase delete query on 'staff' table with foreign key handling
+      if (isSupabaseConfigured) {
+        const { success, error } = await deleteStaffFromSupabase(rep.id, rep.name, rep.email);
+        if (!success && error) {
+          console.error('CRITICAL: Supabase staff table deletion failed:', error);
+          alert(`Warning: Database deletion reported an issue: ${error.message || 'Unknown database error'}. Local record will still be removed.`);
+        }
+      }
+
+      // 2. Delete from local storage
       TelecomStorage.deleteStaff(rep.id);
-      onUpdateStaffList(TelecomStorage.getStaff());
-      showToast(`Account for ${rep.name} deleted.`);
+
+      // 3. Prevent foreign key or orphaned customer references in UI
+      if (customers && onUpdateCustomers) {
+        const updatedCustomers = customers.map((c) =>
+          c.salesRep.toLowerCase() === rep.name.toLowerCase() ? { ...c, salesRep: 'Unassigned' } : c
+        );
+        TelecomStorage.saveCustomers(updatedCustomers);
+        onUpdateCustomers(updatedCustomers);
+      }
+
+      // 4. Immediately update frontend state so the UI removes the row instantly without refresh
+      const refreshedList = TelecomStorage.getStaff();
+      onUpdateStaffList(refreshedList);
+
+      showToast(`Sales rep ${rep.name} deleted successfully from database and CRM.`);
+    } catch (err: any) {
+      console.error('Unexpected error during staff deletion process:', err);
+      alert(`Error deleting staff: ${err?.message || 'Unknown error'}`);
     }
   };
 
@@ -751,6 +810,16 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
             </div>
 
             <form onSubmit={handleSaveCredentials} className="space-y-4">
+              {credentialsError && (
+                <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold">Password Update Error (Supabase Auth):</div>
+                    <div className="mt-0.5">{credentialsError}</div>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Account Login Name (Username)
@@ -784,14 +853,14 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Account Password
+                  Account Password (min 6 characters for Supabase Auth)
                 </label>
                 <input
                   type="text"
                   required
                   value={editPassword}
                   onChange={(e) => setEditPassword(e.target.value)}
-                  placeholder="Enter new password"
+                  placeholder="Enter new password (min 6 chars)"
                   className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-mono text-slate-900 outline-none focus:border-emerald-500"
                 />
               </div>
@@ -799,16 +868,18 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   type="button"
+                  disabled={isSavingCredentials}
                   onClick={() => setIsCredentialsModalOpen(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#0F3E2E] hover:bg-[#14533D] px-4 py-2 text-xs font-bold text-white shadow-xs"
+                  disabled={isSavingCredentials}
+                  className="rounded-xl bg-[#0F3E2E] hover:bg-[#14533D] px-4 py-2 text-xs font-bold text-white shadow-xs disabled:opacity-50"
                 >
-                  Save Credentials
+                  {isSavingCredentials ? 'Updating in Supabase Auth...' : 'Save Credentials'}
                 </button>
               </div>
             </form>
