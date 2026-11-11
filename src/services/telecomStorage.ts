@@ -198,6 +198,7 @@ export const INITIAL_PLANS: Plan[] = [
     popular: true,
     commissionRate: 40.5,
     active: true,
+    display_order: 1,
     notes: 'Top conversion promo plan for students, newcomers, and frequent China travelers.',
   },
   {
@@ -222,6 +223,7 @@ export const INITIAL_PLANS: Plan[] = [
     popular: false,
     commissionRate: 45.0,
     active: true,
+    display_order: 2,
     notes: 'Heavy data allowance for everyday streaming and roaming.',
   },
   {
@@ -246,6 +248,7 @@ export const INITIAL_PLANS: Plan[] = [
     popular: false,
     commissionRate: 52.5,
     active: true,
+    display_order: 3,
     notes: 'Premium high capacity plan for power users.',
   },
   {
@@ -270,6 +273,7 @@ export const INITIAL_PLANS: Plan[] = [
     popular: true,
     commissionRate: 45.0,
     active: true,
+    display_order: 4,
     notes: 'Ideal for frequent business and family travelers across North America and Asia.',
   },
   {
@@ -294,6 +298,7 @@ export const INITIAL_PLANS: Plan[] = [
     popular: true,
     commissionRate: 52.5,
     active: true,
+    display_order: 5,
     notes: 'Highest demand cross-border package with generous data.',
   },
 ];
@@ -916,22 +921,85 @@ export const TelecomStorage = {
     return updated;
   },
 
-  deleteCustomer(id: string): void {
-    const customers = this.getCustomers().filter((c) => c.id !== id);
+  /**
+   * Soft Delete: Marks record as deleted, stores timestamp and deleting admin
+   * Moves record to the Master Admin Recycle Bin without destroying data
+   */
+  softDeleteCustomer(id: string, deletedBy: string = 'Master Admin'): CustomerRecord | null {
+    const customers = this.getCustomers();
+    const index = customers.findIndex((c) => c.id === id);
+    if (index === -1) return null;
+
+    const existing = customers[index];
+    const updated: CustomerRecord = {
+      ...existing,
+      isDeleted: true,
+      deletedAt: new Date().toISOString(),
+      deletedBy,
+      originalStatus: existing.originalStatus || existing.status,
+    };
+    customers[index] = updated;
     this.saveCustomers(customers);
+    return updated;
+  },
+
+  /**
+   * Restore Customer: Recovers soft-deleted record back to its active tab
+   */
+  restoreCustomer(id: string): CustomerRecord | null {
+    const customers = this.getCustomers();
+    const index = customers.findIndex((c) => c.id === id);
+    if (index === -1) return null;
+
+    const existing = customers[index];
+    const updated: CustomerRecord = {
+      ...existing,
+      isDeleted: false,
+      status: existing.originalStatus || existing.status,
+    };
+    delete updated.deletedAt;
+    delete updated.deletedBy;
+    customers[index] = updated;
+    this.saveCustomers(customers);
+    return updated;
+  },
+
+  /**
+   * Hard Delete: Permanently purges records from database after password verification
+   */
+  hardDeleteCustomers(ids: string[]): void {
+    const idSet = new Set(ids);
+    const customers = this.getCustomers().filter((c) => !idSet.has(c.id));
+    this.saveCustomers(customers);
+  },
+
+  deleteCustomer(id: string): void {
+    // Legacy fallback defaults to soft delete
+    this.softDeleteCustomer(id, 'Master Admin');
   },
 
   getPlans(): Plan[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.PLANS);
       if (data) {
-        return JSON.parse(data);
+        const parsed: Plan[] = JSON.parse(data);
+        // Ensure each plan has display_order
+        const withOrder = parsed.map((p, idx) => ({
+          ...p,
+          display_order: p.display_order ?? (idx + 1),
+        }));
+        // Sort strictly by display_order ASC
+        return withOrder.sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
       }
     } catch (e) {
       console.error('Failed to read plans', e);
     }
-    this.savePlans(INITIAL_PLANS);
-    return INITIAL_PLANS;
+    const initialWithOrder = INITIAL_PLANS.map((p, idx) => ({
+      ...p,
+      display_order: p.display_order ?? (idx + 1),
+    }));
+    this.savePlans(initialWithOrder);
+    return initialWithOrder;
   },
 
   savePlans(plans: Plan[]): void {
@@ -940,6 +1008,15 @@ export const TelecomStorage = {
     } catch (e) {
       console.error('Failed to save plans', e);
     }
+  },
+
+  savePlanOrders(orderedPlans: Plan[]): Plan[] {
+    const reindexed = orderedPlans.map((plan, index) => ({
+      ...plan,
+      display_order: index + 1,
+    }));
+    this.savePlans(reindexed);
+    return reindexed;
   },
 
   getCMS(): CMSConfig {

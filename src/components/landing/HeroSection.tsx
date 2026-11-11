@@ -27,10 +27,9 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ cms, onSelectPromoPlan
               <span>CTExcel Wireless · Powered by the Telus Network</span>
             </div>
 
-            {/* Headline */}
+            {/* Dynamic Banner Headline from CMS / site_settings */}
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-[1.15] text-white">
-              Connect Across Canada & China.{' '}
-              <span className="text-emerald-300">Plans from {cms.heroPromoPrice}/mo.</span>
+              {cms.heroTitle}
             </h1>
 
             {/* Subtitle */}

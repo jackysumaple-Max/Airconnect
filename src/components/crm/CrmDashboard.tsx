@@ -19,6 +19,11 @@ import { StaffManagement } from './StaffManagement';
 import { CustomerProfileModal } from './CustomerProfileModal';
 import { NewCustomerModal } from './NewCustomerModal';
 import { ExcelExportModal } from './ExcelExportModal';
+import { DeletedItemsView } from './DeletedItemsView';
+import {
+  restoreCustomerInSupabase,
+  hardDeleteCustomersInSupabase,
+} from '../../services/supabase';
 import {
   Users,
   Activity,
@@ -34,6 +39,7 @@ import {
   AlertTriangle,
   Shield,
   FileSpreadsheet,
+  Trash2,
 } from 'lucide-react';
 
 interface CrmDashboardProps {
@@ -52,6 +58,8 @@ interface CrmDashboardProps {
   onResetData: () => void;
   onUpdateStaffList?: (updatedList: StaffRep[]) => void;
   onUpdateCustomers?: (updatedList: CustomerRecord[]) => void;
+  onRestoreCustomers?: (ids: string[]) => void;
+  onHardDeleteCustomers?: (ids: string[]) => void;
 }
 
 export const CrmDashboard: React.FC<CrmDashboardProps> = ({
@@ -70,13 +78,16 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   onResetData,
   onUpdateStaffList,
   onUpdateCustomers,
+  onRestoreCustomers,
+  onHardDeleteCustomers,
 }) => {
   // Master Admin status
   const isMasterAdmin = Boolean(currentStaff.isMasterAdmin || currentStaff.role === 'super_admin');
 
-  // Main Navigation Views
-  // Non-admins start on 'leads' and cannot access residuals or staff
-  const [activeTab, setActiveTab] = useState<'leads' | 'active_lines' | 'non_active_lines' | 'residuals' | 'commissions' | 'staff' | 'cms'>('leads');
+  // Main Navigation Views (including Master Admin Recycle Bin)
+  const [activeTab, setActiveTab] = useState<
+    'leads' | 'active_lines' | 'non_active_lines' | 'residuals' | 'commissions' | 'staff' | 'cms' | 'deleted_items'
+  >('leads');
   
   // Standardized Date Range Selector State for Leads, Active Lines, Non-Active Lines
   const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>('all');
@@ -109,24 +120,61 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     return Array.from(monthSet).sort().reverse();
   }, [customers]);
 
-  // RBAC Permission-Filtered Records with Dropdown Peer Assignment:
-  // - Master Admin sees ALL records
-  // - Sales Reps see own records + peers with explicit view permissions
+  // RBAC Permission-Filtered Records (Strictly excluding soft-deleted records from active views):
+  // - Master Admin sees ALL active records
+  // - Sales Reps see own active records + peers with explicit view permissions
   const leads = useMemo(() => {
-    return customers.filter((c) => c.status === 'lead' && canStaffViewLead(currentStaff, c.salesRep));
+    return customers.filter(
+      (c) => !c.isDeleted && c.status === 'lead' && canStaffViewLead(currentStaff, c.salesRep)
+    );
   }, [customers, currentStaff]);
 
   const activeLines = useMemo(() => {
-    return customers.filter((c) => c.status === 'active_line' && canStaffViewActiveLine(currentStaff, c.salesRep));
+    return customers.filter(
+      (c) => !c.isDeleted && c.status === 'active_line' && canStaffViewActiveLine(currentStaff, c.salesRep)
+    );
   }, [customers, currentStaff]);
 
   const nonActiveLines = useMemo(() => {
-    return customers.filter((c) => c.status === 'non_active_line' && canStaffViewNonActiveLine(currentStaff, c.salesRep));
+    return customers.filter(
+      (c) => !c.isDeleted && c.status === 'non_active_line' && canStaffViewNonActiveLine(currentStaff, c.salesRep)
+    );
   }, [customers, currentStaff]);
 
   const rbacAccessibleCustomers = useMemo(() => {
-    return customers.filter((c) => canStaffViewRecord(currentStaff, c.salesRep));
+    return customers.filter(
+      (c) => !c.isDeleted && canStaffViewRecord(currentStaff, c.salesRep)
+    );
   }, [customers, currentStaff]);
+
+  // Master Admin Recycle Bin (All Soft-Deleted Records)
+  const deletedItems = useMemo(() => {
+    return customers.filter((c) => Boolean(c.isDeleted));
+  }, [customers]);
+
+  // Restore handler
+  const handleRestore = (ids: string[]) => {
+    if (onRestoreCustomers) {
+      onRestoreCustomers(ids);
+    } else {
+      ids.forEach((id) => {
+        TelecomStorage.restoreCustomer(id);
+        restoreCustomerInSupabase(id);
+      });
+      onUpdateCustomers?.(TelecomStorage.getCustomers());
+    }
+  };
+
+  // Hard delete handler with database purge
+  const handleHardDelete = (ids: string[]) => {
+    if (onHardDeleteCustomers) {
+      onHardDeleteCustomers(ids);
+    } else {
+      TelecomStorage.hardDeleteCustomers(ids);
+      hardDeleteCustomersInSupabase(ids);
+      onUpdateCustomers?.(TelecomStorage.getCustomers());
+    }
+  };
 
   // Automated 180-day clawback counts
   const clawbackAccounts = useMemo(() => {
@@ -463,6 +511,26 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               </button>
             )}
 
+            {/* 8. Master Admin Recycle Bin (Deleted Items) */}
+            {isMasterAdmin && (
+              <button
+                onClick={() => setActiveTab('deleted_items')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                  activeTab === 'deleted_items'
+                    ? 'bg-rose-50 text-rose-950 border border-rose-200 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Trash2 className="h-4 w-4 text-rose-600" />
+                <span>Recycle Bin</span>
+                {deletedItems.length > 0 && (
+                  <span className="rounded-full bg-rose-600 text-white font-extrabold text-[10px] px-1.5 py-0.2">
+                    {deletedItems.length}
+                  </span>
+                )}
+              </button>
+            )}
+
           </div>
 
           {/* Quick Right Actions */}
@@ -649,6 +717,15 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             onSaveCms={onSaveCms}
             onSavePlans={onSavePlans}
             onPreviewSite={onBackToLanding}
+          />
+        )}
+
+        {activeTab === 'deleted_items' && isMasterAdmin && (
+          <DeletedItemsView
+            deletedItems={deletedItems}
+            onRestore={handleRestore}
+            onHardDelete={handleHardDelete}
+            masterAdminPassword={currentStaff.password || 'AdminTemp2026!'}
           />
         )}
 

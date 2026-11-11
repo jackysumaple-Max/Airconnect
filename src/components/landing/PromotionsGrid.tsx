@@ -15,7 +15,10 @@ export const PromotionsGrid: React.FC<PromotionsGridProps> = ({
   onSelectPlan,
   roamingFinePrint,
 }) => {
-  const activePlans = plans.filter((p) => p.active);
+  // Sort strictly by display_order ASC set by Master Admin CMS
+  const activePlans = [...plans]
+    .filter((p) => p.active)
+    .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
 
   return (
     <section id="plans" className="py-16 sm:py-24 bg-slate-50/80">

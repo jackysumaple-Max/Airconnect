@@ -425,3 +425,341 @@ export async function signOutFromSupabase() {
     console.error('Sign out error:', err);
   }
 }
+
+/**
+ * 1. DYNAMIC HERO BANNER STORAGE MANAGEMENT:
+ * Uploads a banner image to the 'banners' bucket in Supabase Storage.
+ * Proactively purges the previous banner file from the bucket to save space.
+ * Returns the public URL of the uploaded image asset.
+ */
+export async function uploadHeroBanner(
+  file: File,
+  oldAssetUrl?: string
+): Promise<{ publicUrl: string | null; error: any }> {
+  if (!isSupabaseConfigured) {
+    // Return base64 preview when Supabase is not configured
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ publicUrl: reader.result as string, error: null });
+      reader.onerror = (err) => resolve({ publicUrl: null, error: err });
+      reader.readAsDataURL(file);
+    });
+  }
+
+  try {
+    const bucketName = 'banners';
+    const timestamp = Date.now();
+    const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const filePath = `hero/${timestamp}_${cleanFileName}`;
+
+    // 1. Upload new image asset to Supabase Storage
+    const { error: uploadError } = await supabase.storage
+      .from(bucketName)
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.warn('Supabase storage upload error:', uploadError.message);
+      // Fallback to base64 data url if bucket does not exist or user hasn't created the bucket yet
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ publicUrl: reader.result as string, error: uploadError });
+        reader.onerror = () => resolve({ publicUrl: null, error: uploadError });
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // 2. Retrieve public URL
+    const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+    const newPublicUrl = publicUrlData?.publicUrl || '';
+
+    // 3. Proactively delete the old image asset from the bucket to save storage space
+    if (oldAssetUrl && oldAssetUrl.includes(bucketName)) {
+      try {
+        const pathPart = oldAssetUrl.split(`${bucketName}/`)[1];
+        if (pathPart) {
+          const oldPath = decodeURIComponent(pathPart.split('?')[0]);
+          await supabase.storage.from(bucketName).remove([oldPath]);
+          console.log('Old hero banner asset deleted from bucket:', oldPath);
+        }
+      } catch (delErr) {
+        console.warn('Note: Non-fatal error cleaning up old banner file:', delErr);
+      }
+    }
+
+    return { publicUrl: newPublicUrl, error: null };
+  } catch (err: any) {
+    console.error('Exception during banner upload:', err);
+    return { publicUrl: null, error: err };
+  }
+}
+
+/**
+ * 2. SITE SETTINGS (CMS Headline, Sub-text, Hero Image):
+ * Persists banner headline, sub-text, and image URL to the 'site_settings' table in Supabase.
+ */
+export async function saveSiteSettingsToSupabase(settings: {
+  heroTitle?: string;
+  heroSubtitle?: string;
+  heroImage?: string;
+  heroBadge?: string;
+  heroPromoPrice?: string;
+  heroPromoData?: string;
+}) {
+  if (!isSupabaseConfigured) {
+    return { success: true, error: null };
+  }
+
+  const payload = {
+    id: 1, // Single-row config table
+    hero_title: settings.heroTitle,
+    hero_subtitle: settings.heroSubtitle,
+    hero_image: settings.heroImage,
+    hero_badge: settings.heroBadge,
+    hero_promo_price: settings.heroPromoPrice,
+    hero_promo_data: settings.heroPromoData,
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    const { data, error } = await supabase
+      .from('site_settings')
+      .upsert(payload, { onConflict: 'id' })
+      .select();
+
+    if (error) {
+      console.warn('Supabase site_settings table update note:', error.message);
+      return { success: false, error };
+    }
+    return { success: true, data };
+  } catch (err: any) {
+    console.error('Unexpected error saving site settings to Supabase:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * Fetches site settings (Hero headline, subtext, image) from Supabase.
+ */
+export async function fetchSiteSettingsFromSupabase() {
+  if (!isSupabaseConfigured) return { data: null, error: null };
+  try {
+    const { data, error } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle();
+    if (error) {
+      return { data: null, error };
+    }
+    if (!data) return { data: null, error: null };
+
+    return {
+      data: {
+        heroTitle: data.hero_title,
+        heroSubtitle: data.hero_subtitle,
+        heroImage: data.hero_image,
+        heroBadge: data.hero_badge,
+        heroPromoPrice: data.hero_promo_price,
+        heroPromoData: data.hero_promo_data,
+      },
+      error: null,
+    };
+  } catch (err: any) {
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * 3. DRAG-AND-DROP PLAN REORDERING:
+ * Updates the 'display_order' (integer) column in the 'mobile_plans' table.
+ */
+export async function updatePlanDisplayOrdersInSupabase(plans: { id: string; display_order?: number }[]) {
+  if (!isSupabaseConfigured) return { success: true, error: null };
+
+  try {
+    const updates = plans.map((p, idx) => ({
+      id: p.id,
+      display_order: p.display_order ?? (idx + 1),
+    }));
+
+    for (const item of updates) {
+      await supabase
+        .from('mobile_plans')
+        .update({ display_order: item.display_order })
+        .eq('id', item.id);
+    }
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.warn('Failed to update plan display_order in Supabase:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * 4. SOFT DELETE RECORD IN SUPABASE:
+ * Flags record with is_deleted = true, deleted_at, deleted_by
+ */
+export async function softDeleteCustomerInSupabase(id: string, deletedBy: string = 'Master Admin') {
+  if (!isSupabaseConfigured) return { success: true, error: null };
+
+  const payload = {
+    is_deleted: true,
+    deleted_at: new Date().toISOString(),
+    deleted_by: deletedBy,
+  };
+
+  try {
+    // Attempt update on 'leads' table
+    await supabase.from('leads').update(payload).eq('id', id);
+    // Also attempt update on 'customers' table if used
+    await supabase.from('customers').update(payload).eq('id', id);
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.warn('Soft delete in Supabase note:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * 5. RESTORE RECORD IN SUPABASE:
+ * Clears is_deleted flag and returns record to active status
+ */
+export async function restoreCustomerInSupabase(id: string) {
+  if (!isSupabaseConfigured) return { success: true, error: null };
+
+  const payload = {
+    is_deleted: false,
+    deleted_at: null,
+    deleted_by: null,
+  };
+
+  try {
+    await supabase.from('leads').update(payload).eq('id', id);
+    await supabase.from('customers').update(payload).eq('id', id);
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.warn('Restore in Supabase note:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * 6. HARD DELETE (PERMANENT PURGE) IN SUPABASE:
+ * Deletes rows permanently from database
+ */
+export async function hardDeleteCustomersInSupabase(ids: string[]) {
+  if (!isSupabaseConfigured) return { success: true, error: null };
+
+  try {
+    await supabase.from('leads').delete().in('id', ids);
+    await supabase.from('customers').delete().in('id', ids);
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('Hard delete in Supabase error:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * 7. REAL-TIME SUBSCRIPTION FOR LEADS:
+ * Subscribes to postgres_changes on the 'leads' table.
+ * Automatically triggers callback when new lead is inserted, updated, or deleted.
+ */
+export function subscribeToLeadsRealtime(
+  onInsert: (lead: CustomerRecord) => void,
+  onUpdate?: (lead: CustomerRecord) => void,
+  onDelete?: (id: string) => void
+) {
+  if (!isSupabaseConfigured) return () => {};
+
+  try {
+    const channel = supabase
+      .channel('leads-realtime-feed')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leads' },
+        (payload: any) => {
+          console.log('⚡ Realtime Lead change received:', payload.eventType, payload.new);
+
+          if (payload.eventType === 'INSERT' && payload.new) {
+            const raw = payload.new;
+            const newLead: CustomerRecord = {
+              id: raw.id || `LEAD-${Date.now().toString().slice(-4)}`,
+              status: raw.status || 'lead',
+              firstName: raw.first_name || '',
+              lastName: raw.last_name || '',
+              fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim() || 'New Lead',
+              email: raw.email || '',
+              phone: raw.phone || '',
+              preferredPlanId: raw.preferred_plan_id || '',
+              preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
+              monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
+              salesRep: raw.sales_rep || 'Unassigned',
+              referralSource: raw.referral_source || 'Website Lead Capture',
+              submittedAt: raw.submitted_at || new Date().toISOString(),
+              callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
+              notes: raw.notes || '',
+              leadFollowUpStatus: raw.lead_follow_up_status || 'new',
+              isDeleted: Boolean(raw.is_deleted),
+              deletedAt: raw.deleted_at,
+              deletedBy: raw.deleted_by,
+              idVerification: {
+                status: raw.id_verification_status || 'unverified',
+              },
+              commission: {
+                amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
+                status: 'pending',
+                isClawbackFlagged: false,
+                multiplierUsed: 1.0,
+              },
+            };
+            onInsert(newLead);
+          } else if (payload.eventType === 'UPDATE' && payload.new && onUpdate) {
+            const raw = payload.new;
+            const updated: CustomerRecord = {
+              id: raw.id,
+              status: raw.status || 'lead',
+              firstName: raw.first_name || '',
+              lastName: raw.last_name || '',
+              fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim(),
+              email: raw.email || '',
+              phone: raw.phone || '',
+              preferredPlanId: raw.preferred_plan_id || '',
+              preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
+              monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
+              salesRep: raw.sales_rep || 'Unassigned',
+              referralSource: raw.referral_source || 'Website Lead Capture',
+              submittedAt: raw.submitted_at || new Date().toISOString(),
+              callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
+              notes: raw.notes || '',
+              leadFollowUpStatus: raw.lead_follow_up_status || 'new',
+              isDeleted: Boolean(raw.is_deleted),
+              deletedAt: raw.deleted_at,
+              deletedBy: raw.deleted_by,
+              idVerification: {
+                status: raw.id_verification_status || 'unverified',
+              },
+              commission: {
+                amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
+                status: 'pending',
+                isClawbackFlagged: false,
+                multiplierUsed: 1.0,
+              },
+            };
+            onUpdate(updated);
+          } else if (payload.eventType === 'DELETE' && payload.old && onDelete) {
+            onDelete(payload.old.id);
+          }
+        }
+      )
+      .subscribe((status: string) => {
+        console.log('📡 Supabase Leads realtime status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  } catch (err) {
+    console.error('Failed to initialize Realtime subscription on leads:', err);
+    return () => {};
+  }
+}

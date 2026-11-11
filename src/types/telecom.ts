@@ -33,6 +33,7 @@ export interface Plan {
   commissionRate: number; // Base rate or reference
   active: boolean;
   notes?: string;
+  display_order?: number; // Integer sorting order for pricing grid
 }
 
 export interface CommissionRecord {
@@ -108,6 +109,12 @@ export interface CustomerRecord {
   // Lead assignment history
   assignedBy?: string;
   assignedAt?: string;
+
+  // Soft Delete & Trash / Recycle Bin tracking
+  isDeleted?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  originalStatus?: CustomerStatus;
 }
 
 export interface MonthlyCohortSummary {

@@ -14,6 +14,11 @@ import { StaffAuthGate } from './components/crm/StaffAuthGate';
 import {
   insertLeadToSupabase,
   fetchLeadsFromSupabase,
+  fetchSiteSettingsFromSupabase,
+  subscribeToLeadsRealtime,
+  softDeleteCustomerInSupabase,
+  restoreCustomerInSupabase,
+  hardDeleteCustomersInSupabase,
   isSupabaseConfigured,
 } from './services/supabase';
 import { Sparkles } from 'lucide-react';
@@ -69,26 +74,80 @@ export default function App() {
     };
   }, []);
 
-  // Load persistent state on mount & synchronize with Supabase
+  // Load persistent state on mount & synchronize with Supabase Realtime
   useEffect(() => {
     setCustomers(TelecomStorage.getCustomers());
     setPlans(TelecomStorage.getPlans());
     setCms(TelecomStorage.getCMS());
     setStaffMembers(TelecomStorage.getStaff());
 
-    // Synchronize leads from Supabase database if configured
-    if (isSupabaseConfigured) {
-      fetchLeadsFromSupabase().then(({ data, error }) => {
-        if (!error && data && data.length > 0) {
-          TelecomStorage.mergeExternalLeads(data);
-          setCustomers(TelecomStorage.getCustomers());
-        } else if (error) {
-          console.error('Failed to synchronize leads from Supabase database on load:', error);
-        }
-      }).catch((err) => {
-        console.error('Unexpected error fetching leads from Supabase on mount:', err);
-      });
-    }
+    if (!isSupabaseConfigured) return;
+
+    // 1. Fetch remote site settings from Supabase site_settings table
+    fetchSiteSettingsFromSupabase().then(({ data, error }) => {
+      if (!error && data) {
+        setCms((prev) => {
+          const updated = {
+            ...prev,
+            heroTitle: data.heroTitle || prev.heroTitle,
+            heroSubtitle: data.heroSubtitle || prev.heroSubtitle,
+            heroImage: data.heroImage || prev.heroImage,
+            heroBadge: data.heroBadge || prev.heroBadge,
+            heroPromoPrice: data.heroPromoPrice || prev.heroPromoPrice,
+            heroPromoData: data.heroPromoData || prev.heroPromoData,
+          };
+          TelecomStorage.saveCMS(updated);
+          return updated;
+        });
+      }
+    });
+
+    // 2. Synchronize initial leads from Supabase database
+    fetchLeadsFromSupabase().then(({ data, error }) => {
+      if (!error && data && data.length > 0) {
+        TelecomStorage.mergeExternalLeads(data);
+        setCustomers(TelecomStorage.getCustomers());
+      } else if (error) {
+        console.error('Failed to synchronize leads from Supabase database on load:', error);
+      }
+    }).catch((err) => {
+      console.error('Unexpected error fetching leads from Supabase on mount:', err);
+    });
+
+    // 3. Supabase Realtime subscription on 'leads' table:
+    // When a customer submits a lead or external record is inserted,
+    // automatically and instantly prepend to state without page refresh
+    const unsubscribe = subscribeToLeadsRealtime(
+      (newLead) => {
+        console.log('⚡ [Realtime] New lead received:', newLead.id, newLead.fullName);
+        setCustomers((prev) => {
+          if (prev.some((c) => c.id === newLead.id)) return prev;
+          const updated = [newLead, ...prev];
+          TelecomStorage.saveCustomers(updated);
+          return updated;
+        });
+      },
+      (updatedLead) => {
+        console.log('⚡ [Realtime] Lead updated:', updatedLead.id);
+        setCustomers((prev) => {
+          const updated = prev.map((c) => (c.id === updatedLead.id ? { ...c, ...updatedLead } : c));
+          TelecomStorage.saveCustomers(updated);
+          return updated;
+        });
+      },
+      (deletedId) => {
+        console.log('⚡ [Realtime] Lead deleted:', deletedId);
+        setCustomers((prev) => {
+          const updated = prev.filter((c) => c.id !== deletedId);
+          TelecomStorage.saveCustomers(updated);
+          return updated;
+        });
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Navigation helpers for dealer portal
@@ -167,8 +226,33 @@ export default function App() {
     setCustomers(TelecomStorage.getCustomers());
   };
 
-  const handleDeleteCustomer = (id: string) => {
-    TelecomStorage.deleteCustomer(id);
+  // Soft-delete: Moves record to Master Admin Recycle Bin
+  const handleDeleteCustomer = async (id: string) => {
+    const deletedBy = authStaff?.name || 'Master Admin';
+    TelecomStorage.softDeleteCustomer(id, deletedBy);
+    if (isSupabaseConfigured) {
+      await softDeleteCustomerInSupabase(id, deletedBy);
+    }
+    setCustomers(TelecomStorage.getCustomers());
+  };
+
+  // Restore: Recovers soft-deleted records back to active tab
+  const handleRestoreCustomers = async (ids: string[]) => {
+    for (const id of ids) {
+      TelecomStorage.restoreCustomer(id);
+      if (isSupabaseConfigured) {
+        await restoreCustomerInSupabase(id);
+      }
+    }
+    setCustomers(TelecomStorage.getCustomers());
+  };
+
+  // Hard-delete: Permanently purges records from Supabase and CRM
+  const handleHardDeleteCustomers = async (ids: string[]) => {
+    TelecomStorage.hardDeleteCustomers(ids);
+    if (isSupabaseConfigured) {
+      await hardDeleteCustomersInSupabase(ids);
+    }
     setCustomers(TelecomStorage.getCustomers());
   };
 
@@ -257,6 +341,8 @@ export default function App() {
         onResetData={handleResetData}
         onUpdateStaffList={handleUpdateStaffList}
         onUpdateCustomers={handleUpdateCustomerList}
+        onRestoreCustomers={handleRestoreCustomers}
+        onHardDeleteCustomers={handleHardDeleteCustomers}
       />
     );
   }
