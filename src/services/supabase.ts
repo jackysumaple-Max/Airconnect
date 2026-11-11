@@ -242,12 +242,11 @@ export function setLeadsTableName(tableName: string) {
 }
 
 /**
- * CRITICAL PRODUCTION BUG FIX:
- * Inserts a new customer lead from the frontend "Request a Callback" form into Supabase.
- * - Targets table 'Airwireless' (with fallback to 'airwireless' and 'leads').
- * - CRITICAL: Does NOT call .select() at the end to prevent permission crashes when anon role only has INSERT rights.
- * - Dynamically prunes unmapped columns if the database table schema uses a subset of fields.
- * - Captures and returns exact error.message, error.details, error.hint, and error.code.
+ * CRITICAL PRODUCTION FORM SUBMISSION:
+ * Inserts a customer lead directly into table 'Airwireless'.
+ * Strictly executes: await supabase.from('Airwireless').insert([payload]);
+ * with NO .select() or .single() appended, ensuring anonymous public visitors
+ * do not hit RLS SELECT permission violations.
  */
 export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
   data: any;
@@ -256,13 +255,11 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
   errorDetails?: SupabaseErrorDetails;
   tableUsed?: string;
 }> {
-  const targetTable = getLeadsTableName();
-
   if (!isSupabaseConfigured) {
     const reason = !supabaseUrl
       ? 'VITE_SUPABASE_URL is missing in the production deployment environment.'
       : 'VITE_SUPABASE_ANON_KEY is missing or invalid in the production deployment environment.';
-    console.error('CRITICAL: Supabase cannot save lead because credentials are not configured:', reason);
+    console.error('CRITICAL: Supabase credentials not configured:', reason);
     return {
       data: null,
       error: new Error(`Database connection not configured: ${reason}`),
@@ -271,15 +268,14 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
         message: reason,
         details: 'Neither environment variables nor localStorage credentials were provided.',
         code: 'NO_CONFIG',
-        table: targetTable,
+        table: 'Airwireless',
       },
+      tableUsed: 'Airwireless',
     };
   }
 
-  // Construct structured payload matching standard Supabase column names
-  // Notice: We intentionally do NOT force an arbitrary non-UUID 'id' string into the payload,
-  // preventing PostgreSQL 'invalid input syntax for type uuid' if the primary key uses gen_random_uuid().
-  const primaryPayload: Record<string, any> = {
+  // Exact payload matching Airwireless schema
+  const payload = {
     first_name: lead.firstName || '',
     last_name: lead.lastName || '',
     full_name: lead.fullName || `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
@@ -295,112 +291,75 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
     notes: lead.notes || '',
   };
 
-  // Candidate tables to try: primary 'Airwireless', lowercase 'airwireless', and fallback 'leads'
-  const candidateTables = Array.from(new Set([targetTable, 'Airwireless', 'airwireless', 'leads', 'customers']));
+  try {
+    console.log('[Supabase Lead Insert] Calling await supabase.from(\'Airwireless\').insert([payload]) with NO .select() or .single():', payload);
 
-  let lastError: any = null;
-  let finalTableUsed = targetTable;
+    // EXACT INSTRUCTION:
+    // await supabase.from('Airwireless').insert([payload]); with NO .select() or .single() appended
+    const { error } = await supabase.from('Airwireless').insert([payload]);
 
-  for (const tbl of candidateTables) {
-    let currentPayload = { ...primaryPayload };
-    let attemptCount = 0;
-    const maxColumnRetries = 6;
+    if (!error) {
+      console.log('[Supabase Lead Insert] SUCCESS! Row inserted into table "Airwireless".');
+      return {
+        data: true,
+        error: null,
+        tableUsed: 'Airwireless',
+      };
+    }
 
-    while (attemptCount < maxColumnRetries) {
-      attemptCount++;
-      try {
-        console.log(`[Supabase Lead Insert] Attempting insert into table "${tbl}" (NO .select()). Payload keys:`, Object.keys(currentPayload));
-        
-        // CRITICAL: NO .select() AT THE END!
-        // Anonymous visitors typically have INSERT permission only.
-        // Calling .select() triggers 'RETURNING *' which requires SELECT permission and crashes with 42501.
-        const { error } = await supabase.from(tbl).insert([currentPayload]);
+    console.error('[Supabase Lead Insert] Table "Airwireless" returned error:', error.message, error.details);
 
-        if (!error) {
-          console.log(`[Supabase Lead Insert] SUCCESS! Row inserted into table "${tbl}".`);
-          return {
-            data: true,
-            error: null,
-            tableUsed: tbl,
-          };
-        }
-
-        lastError = error;
-        finalTableUsed = tbl;
-        console.warn(`[Supabase Lead Insert] Table "${tbl}" returned error (code: ${error.code}):`, error.message, error.details);
-
-        // Check for table relation not found (42P01 or PGRST204 with relation does not exist)
-        if (error.code === '42P01' || error.message.includes('does not exist') || error.message.includes('relation')) {
-          console.warn(`[Supabase Lead Insert] Table "${tbl}" not found. Trying next candidate table...`);
-          break; // Break inner while loop to try next candidate table
-        }
-
-        // Check for column missing / schema mismatch (code 42703 or PGRST204)
-        // e.g. "Could not find the 'xyz' column of 'Airwireless' in the schema cache" or 'column "xyz" of relation ... does not exist'
-        const columnMatch =
-          error.message.match(/Could not find the '([^']+)' column/i) ||
-          error.message.match(/column "([^"]+)" of relation/i) ||
-          error.message.match(/column "([^"]+)" does not exist/i);
-
-        if (columnMatch && columnMatch[1]) {
-          const missingCol = columnMatch[1];
-          if (missingCol in currentPayload) {
-            console.warn(`[Supabase Lead Insert] Pruning unmapped column "${missingCol}" from payload and retrying...`);
-            delete currentPayload[missingCol];
-            continue; // Retry with pruned payload
-          }
-        }
-
-        // If error is UUID syntax mismatch on 'id'
-        if (error.code === '22P02' && error.message.includes('uuid') && 'id' in currentPayload) {
-          delete currentPayload['id'];
-          continue;
-        }
-
-        // Any other error (like RLS policy 42501 permission denied) cannot be auto-recovered by payload change
-        break;
-      } catch (err: any) {
-        lastError = err;
-        finalTableUsed = tbl;
-        break;
+    // If PostgreSQL schema uses lowercase 'airwireless' or relation error
+    if (error.code === '42P01' || error.message.includes('does not exist') || error.message.includes('relation')) {
+      console.warn('[Supabase Lead Insert] Table "Airwireless" not found. Attempting lowercase "airwireless"...');
+      const { error: lowerErr } = await supabase.from('airwireless').insert([payload]);
+      if (!lowerErr) {
+        console.log('[Supabase Lead Insert] SUCCESS! Row inserted into table "airwireless".');
+        return {
+          data: true,
+          error: null,
+          tableUsed: 'airwireless',
+        };
       }
     }
 
-    // If RLS permission error (42501), stop and return exact details immediately
-    if (lastError && (lastError.code === '42501' || lastError.message?.toLowerCase().includes('row-level security'))) {
-      break;
-    }
+    // Format detailed error for UI surfacing
+    const errMsg = error.message || 'Database rejected the submission.';
+    const errDetails = error.details || null;
+    const errHint = error.hint || null;
+    const errCode = error.code || null;
+
+    const rejectionReason = `${errMsg}${errDetails ? ` | Details: ${errDetails}` : ''}${errHint ? ` | Hint: ${errHint}` : ''} (Table: Airwireless)`;
+
+    return {
+      data: null,
+      error: new Error(errMsg),
+      rejectionReason,
+      errorDetails: {
+        message: errMsg,
+        details: errDetails,
+        hint: errHint,
+        code: errCode,
+        table: 'Airwireless',
+      },
+      tableUsed: 'Airwireless',
+    };
+  } catch (err: any) {
+    console.error('Unexpected exception during Supabase lead insertion:', err);
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+      rejectionReason: err?.message || 'Network error connecting to Supabase database.',
+      errorDetails: {
+        message: err?.message || 'Network error connecting to Supabase database.',
+        details: err?.details || null,
+        hint: err?.hint || null,
+        code: err?.code || null,
+        table: 'Airwireless',
+      },
+      tableUsed: 'Airwireless',
+    };
   }
-
-  // Format detailed error for UI surfacing
-  const errMsg = lastError?.message || 'Database rejected the submission.';
-  const errDetails = lastError?.details || null;
-  const errHint = lastError?.hint || null;
-  const errCode = lastError?.code || null;
-
-  const rejectionReason = `${errMsg}${errDetails ? ` | Details: ${errDetails}` : ''}${errHint ? ` | Hint: ${errHint}` : ''} (Table: ${finalTableUsed})`;
-
-  console.error('CRITICAL: Supabase lead insertion rejected:', {
-    message: errMsg,
-    details: errDetails,
-    hint: errHint,
-    code: errCode,
-    table: finalTableUsed,
-  });
-
-  return {
-    data: null,
-    error: new Error(errMsg),
-    rejectionReason,
-    errorDetails: {
-      message: errMsg,
-      details: errDetails,
-      hint: errHint,
-      code: errCode,
-      table: finalTableUsed,
-    },
-    tableUsed: finalTableUsed,
-  };
 }
 
 /**
