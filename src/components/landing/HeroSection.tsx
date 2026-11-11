@@ -29,12 +29,13 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ cms, onSelectPromoPlan
 
             {/* Dynamic Banner Headline from CMS / site_settings */}
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-[1.15] text-white">
-              {cms.heroTitle}
+              {cms.heroTitle || 'CTExcel Mobile Plans. Powered by Telus.'}
             </h1>
 
-            {/* Subtitle */}
+            {/* Streamlined Subtitle focusing strictly on data, pricing, and roaming */}
             <p className="text-base sm:text-lg text-emerald-100/90 leading-relaxed max-w-2xl">
-              {cms.heroSubtitle}
+              {cms.heroSubtitle ||
+                'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.'}
             </p>
 
             {/* Highlight Feature Card: Current Weekly Promotion */}
@@ -63,23 +64,23 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ cms, onSelectPromoPlan
                 </div>
               </div>
 
-              {/* Quick bullet points */}
+              {/* Editable Feature Checkmark List (Feature 2) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-emerald-100">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                  <span>Free China-Canada Roaming</span>
+                  <span>{cms.heroFeature1 || 'Free China-Canada Roaming'}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                  <span>Complimentary Chinese Phone #</span>
+                  <span>{cms.heroFeature2 || 'Complimentary Chinese Phone #'}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                  <span>Unlimited Calling to 9 Countries</span>
+                  <span>{cms.heroFeature3 || 'Unlimited Calling to 9 Countries'}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                  <span>Free Instant eSIM QR Code</span>
+                  <span>{cms.heroFeature4 || 'Free Instant eSIM QR Code'}</span>
                 </div>
               </div>
 
@@ -122,7 +123,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ cms, onSelectPromoPlan
 
           </div>
 
-          {/* Right Column: Visual Showcase using User Attachment Reference */}
+          {/* Right Column: Visual Showcase with Editable Graphic Card (Feature 2) */}
           <div className="lg:col-span-5 flex justify-center">
             <div className="relative w-full max-w-sm sm:max-w-md">
               
@@ -139,7 +140,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ cms, onSelectPromoPlan
                   </span>
                 </div>
 
-                {/* Showcase Image from User Attachment */}
+                {/* Showcase Image */}
                 <div className="relative overflow-hidden rounded-2xl border border-emerald-700/50 aspect-[4/4] bg-emerald-900/50">
                   <img
                     src={cms.heroImage || '/assets/aistudio/image_de9eb1a6.png'}
@@ -151,38 +152,42 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ cms, onSelectPromoPlan
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#08281D] via-transparent to-transparent opacity-80" />
                   
-                  {/* Floating Mini-card inside preview */}
+                  {/* Floating Mini-card inside preview (Editable via CMS) */}
                   <div className="absolute bottom-3 left-3 right-3 rounded-xl border border-emerald-400/30 bg-[#0F3E2E]/90 p-3 backdrop-blur-md">
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                          Dual Number Service
+                          {cms.heroCardTag || 'DUAL NUMBER SERVICE'}
                         </span>
                         <div className="text-sm font-bold text-white">
-                          Canada + China Dual Line
+                          {cms.heroCardTitle || 'Canada + China Dual Line'}
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-base font-extrabold text-emerald-300">$27/mo</div>
-                        <div className="text-[10px] text-emerald-100/70">Telus 5G eSIM</div>
+                        <div className="text-base font-extrabold text-emerald-300">
+                          {cms.heroCardPrice || '$27/mo'}
+                        </div>
+                        <div className="text-[10px] text-emerald-100/70">
+                          {cms.heroCardSubtitle || 'Telus 5G eSIM'}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Bottom Trust Indicators */}
+                {/* Bottom 3 Feature Boxes (Editable via CMS) */}
                 <div className="mt-4 grid grid-cols-3 gap-2 text-center text-[11px]">
                   <div className="rounded-xl bg-emerald-900/40 border border-emerald-800/40 p-2">
-                    <div className="font-bold text-white">4 Countries</div>
-                    <div className="text-emerald-300 text-[10px]">Free Roaming</div>
+                    <div className="font-bold text-white">{cms.heroBox1Title || '4 Countries'}</div>
+                    <div className="text-emerald-300 text-[10px]">{cms.heroBox1Sub || 'Free Roaming'}</div>
                   </div>
                   <div className="rounded-xl bg-emerald-900/40 border border-emerald-800/40 p-2">
-                    <div className="font-bold text-white">China #</div>
-                    <div className="text-emerald-300 text-[10px]">Included Free</div>
+                    <div className="font-bold text-white">{cms.heroBox2Title || 'China #'}</div>
+                    <div className="text-emerald-300 text-[10px]">{cms.heroBox2Sub || 'Included Free'}</div>
                   </div>
                   <div className="rounded-xl bg-emerald-900/40 border border-emerald-800/40 p-2">
-                    <div className="font-bold text-white">9 Nations</div>
-                    <div className="text-emerald-300 text-[10px]">Unlimited Talk</div>
+                    <div className="font-bold text-white">{cms.heroBox3Title || '9 Nations'}</div>
+                    <div className="text-emerald-300 text-[10px]">{cms.heroBox3Sub || 'Unlimited Talk'}</div>
                   </div>
                 </div>
 

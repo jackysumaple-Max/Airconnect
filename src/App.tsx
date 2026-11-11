@@ -87,7 +87,7 @@ export default function App() {
     fetchSiteSettingsFromSupabase().then(({ data, error }) => {
       if (!error && data) {
         setCms((prev) => {
-          const updated = {
+          const updated: CMSConfig = {
             ...prev,
             heroTitle: data.heroTitle || prev.heroTitle,
             heroSubtitle: data.heroSubtitle || prev.heroSubtitle,
@@ -95,6 +95,20 @@ export default function App() {
             heroBadge: data.heroBadge || prev.heroBadge,
             heroPromoPrice: data.heroPromoPrice || prev.heroPromoPrice,
             heroPromoData: data.heroPromoData || prev.heroPromoData,
+            heroFeature1: data.heroFeature1 || prev.heroFeature1,
+            heroFeature2: data.heroFeature2 || prev.heroFeature2,
+            heroFeature3: data.heroFeature3 || prev.heroFeature3,
+            heroFeature4: data.heroFeature4 || prev.heroFeature4,
+            heroCardTag: data.heroCardTag || prev.heroCardTag,
+            heroCardTitle: data.heroCardTitle || prev.heroCardTitle,
+            heroCardPrice: data.heroCardPrice || prev.heroCardPrice,
+            heroCardSubtitle: data.heroCardSubtitle || prev.heroCardSubtitle,
+            heroBox1Title: data.heroBox1Title || prev.heroBox1Title,
+            heroBox1Sub: data.heroBox1Sub || prev.heroBox1Sub,
+            heroBox2Title: data.heroBox2Title || prev.heroBox2Title,
+            heroBox2Sub: data.heroBox2Sub || prev.heroBox2Sub,
+            heroBox3Title: data.heroBox3Title || prev.heroBox3Title,
+            heroBox3Sub: data.heroBox3Sub || prev.heroBox3Sub,
           };
           TelecomStorage.saveCMS(updated);
           return updated;
@@ -207,13 +221,17 @@ export default function App() {
     // 2. Insert into Supabase database ('leads' or 'customers' table)
     if (isSupabaseConfigured) {
       try {
-        const { error } = await insertLeadToSupabase(created);
+        const { error, rejectionReason } = await insertLeadToSupabase(created);
         if (error) {
-          console.error('CRITICAL: Supabase lead insertion failed in handleLeadSubmit:', error.message || error);
+          console.error('CRITICAL: Supabase lead insertion failed in handleLeadSubmit:', rejectionReason || error.message);
+          throw new Error(rejectionReason || error.message);
         }
       } catch (err: any) {
-        console.error('CRITICAL: Unexpected exception during Supabase lead insertion in handleLeadSubmit:', err);
+        console.error('CRITICAL: Exception during Supabase lead insertion in handleLeadSubmit:', err);
+        throw err;
       }
+    } else {
+      console.warn('NOTE: Supabase credentials not configured in this deployment. Lead saved locally in browser.');
     }
 
     // 3. Immediately refresh customers state so backend "Leads" dashboard reflects the new lead

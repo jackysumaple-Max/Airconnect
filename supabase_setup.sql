@@ -28,70 +28,140 @@ CREATE TABLE IF NOT EXISTS public.leads (
     deleted_by TEXT
 );
 
--- Enable RLS and permissions for Leads
+-- CRITICAL FIX FOR BUG 1: Explicitly grant permissions to anon (anonymous) role
+-- This allows visitors on mobile devices and external PCs to insert leads
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;
+
+-- Enable Row Level Security (RLS) on leads table
 ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 
 -- Allow anonymous visitors on the landing page to insert callback requests
 DROP POLICY IF EXISTS "Allow anonymous lead insert" ON public.leads;
+DROP POLICY IF EXISTS "Allow public insert to leads" ON public.leads;
+DROP POLICY IF EXISTS "Enable insert for everyone" ON public.leads;
 CREATE POLICY "Allow anonymous lead insert" ON public.leads
     FOR INSERT 
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     WITH CHECK (true);
 
--- Allow authenticated staff members to read all leads in the CRM dashboard
+-- Allow authenticated staff members (and anon dashboard sync) to select leads
 DROP POLICY IF EXISTS "Allow staff to select leads" ON public.leads;
+DROP POLICY IF EXISTS "Allow public read leads" ON public.leads;
 CREATE POLICY "Allow staff to select leads" ON public.leads
     FOR SELECT 
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true);
 
 -- Allow staff members to update lead follow-up status, assignment, and soft-delete
 DROP POLICY IF EXISTS "Allow staff to update leads" ON public.leads;
 CREATE POLICY "Allow staff to update leads" ON public.leads
     FOR UPDATE
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true);
 
 -- Allow Master Admin hard deletes
 DROP POLICY IF EXISTS "Allow admin delete leads" ON public.leads;
 CREATE POLICY "Allow admin delete leads" ON public.leads
     FOR DELETE
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true);
 
 -- Enable Supabase Realtime publication on the leads table for instant dashboard sync
 ALTER PUBLICATION supabase_realtime ADD TABLE public.leads;
 
 
--- 2. SITE SETTINGS TABLE (CMS Hero Banner Headline, Sub-text, Image Asset)
+-- 2. SITE SETTINGS TABLE (CMS Hero Banner Headline, Sub-Header, Checkmarks & Right Card)
 CREATE TABLE IF NOT EXISTS public.site_settings (
     id INT PRIMARY KEY DEFAULT 1,
-    hero_title TEXT DEFAULT 'CTExcel Mobile Plans Powered by Telus',
-    hero_subtitle TEXT DEFAULT 'Stay seamlessly connected across Canada, China, the US, and Mexico. Get up to 100GB of 5G data from $27/mo with free roaming, a complimentary Chinese phone number, and unlimited international calling.',
+    hero_title TEXT DEFAULT 'CTExcel Mobile Plans. Powered by Telus.',
+    hero_subtitle TEXT DEFAULT 'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.',
     hero_image TEXT DEFAULT '/assets/aistudio/image_de9eb1a6.png',
     hero_badge TEXT DEFAULT 'Exclusive Promotional Offer',
     hero_promo_price TEXT DEFAULT '$27',
     hero_promo_data TEXT DEFAULT '50GB',
+    -- Feature 2: Left Column 4 Checkmark Features
+    hero_feature_1 TEXT DEFAULT 'Free China-Canada Roaming',
+    hero_feature_2 TEXT DEFAULT 'Complimentary Chinese Phone #',
+    hero_feature_3 TEXT DEFAULT 'Unlimited Calling to 9 Countries',
+    hero_feature_4 TEXT DEFAULT 'Free Instant eSIM QR Code',
+    -- Feature 2: Right Side Graphic Card
+    hero_card_tag TEXT DEFAULT 'DUAL NUMBER SERVICE',
+    hero_card_title TEXT DEFAULT 'Canada + China Dual Line',
+    hero_card_price TEXT DEFAULT '$27/mo',
+    hero_card_subtitle TEXT DEFAULT 'Telus 5G eSIM',
+    hero_box_1_title TEXT DEFAULT '4 Countries',
+    hero_box_1_sub TEXT DEFAULT 'Free Roaming',
+    hero_box_2_title TEXT DEFAULT 'China #',
+    hero_box_2_sub TEXT DEFAULT 'Included Free',
+    hero_box_3_title TEXT DEFAULT '9 Nations',
+    hero_box_3_sub TEXT DEFAULT 'Unlimited Talk',
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert initial singleton row
-INSERT INTO public.site_settings (id, hero_title, hero_subtitle, hero_image, hero_badge, hero_promo_price, hero_promo_data)
-VALUES (1, 'CTExcel Mobile Plans Powered by Telus', 'Stay seamlessly connected across Canada, China, the US, and Mexico. Get up to 100GB of 5G data from $27/mo with free roaming, a complimentary Chinese phone number, and unlimited international calling.', '/assets/aistudio/image_de9eb1a6.png', 'Exclusive Promotional Offer', '$27', '50GB')
-ON CONFLICT (id) DO NOTHING;
+-- Ensure newly added columns exist if table was already created
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_feature_1 TEXT DEFAULT 'Free China-Canada Roaming';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_feature_2 TEXT DEFAULT 'Complimentary Chinese Phone #';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_feature_3 TEXT DEFAULT 'Unlimited Calling to 9 Countries';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_feature_4 TEXT DEFAULT 'Free Instant eSIM QR Code';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_card_tag TEXT DEFAULT 'DUAL NUMBER SERVICE';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_card_title TEXT DEFAULT 'Canada + China Dual Line';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_card_price TEXT DEFAULT '$27/mo';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_card_subtitle TEXT DEFAULT 'Telus 5G eSIM';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_1_title TEXT DEFAULT '4 Countries';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_1_sub TEXT DEFAULT 'Free Roaming';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_2_title TEXT DEFAULT 'China #';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_2_sub TEXT DEFAULT 'Included Free';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_3_title TEXT DEFAULT '9 Nations';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_3_sub TEXT DEFAULT 'Unlimited Talk';
 
+-- Insert or update singleton row with streamlined copy
+INSERT INTO public.site_settings (
+    id, hero_title, hero_subtitle, hero_image, hero_badge, hero_promo_price, hero_promo_data,
+    hero_feature_1, hero_feature_2, hero_feature_3, hero_feature_4,
+    hero_card_tag, hero_card_title, hero_card_price, hero_card_subtitle,
+    hero_box_1_title, hero_box_1_sub, hero_box_2_title, hero_box_2_sub, hero_box_3_title, hero_box_3_sub
+)
+VALUES (
+    1,
+    'CTExcel Mobile Plans. Powered by Telus.',
+    'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.',
+    '/assets/aistudio/image_de9eb1a6.png',
+    'Exclusive Promotional Offer',
+    '$27',
+    '50GB',
+    'Free China-Canada Roaming',
+    'Complimentary Chinese Phone #',
+    'Unlimited Calling to 9 Countries',
+    'Free Instant eSIM QR Code',
+    'DUAL NUMBER SERVICE',
+    'Canada + China Dual Line',
+    '$27/mo',
+    'Telus 5G eSIM',
+    '4 Countries',
+    'Free Roaming',
+    'China #',
+    'Included Free',
+    '9 Nations',
+    'Unlimited Talk'
+)
+ON CONFLICT (id) DO UPDATE SET
+    hero_title = EXCLUDED.hero_title,
+    hero_subtitle = EXCLUDED.hero_subtitle;
+
+GRANT ALL ON TABLE public.site_settings TO anon, authenticated, service_role;
 ALTER TABLE public.site_settings ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow public read site_settings" ON public.site_settings;
 CREATE POLICY "Allow public read site_settings" ON public.site_settings
     FOR SELECT
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true);
 
 DROP POLICY IF EXISTS "Allow admin update site_settings" ON public.site_settings;
 CREATE POLICY "Allow admin update site_settings" ON public.site_settings
     FOR ALL
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true)
     WITH CHECK (true);
 
@@ -116,18 +186,19 @@ CREATE TABLE IF NOT EXISTS public.mobile_plans (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+GRANT ALL ON TABLE public.mobile_plans TO anon, authenticated, service_role;
 ALTER TABLE public.mobile_plans ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow public read mobile_plans" ON public.mobile_plans;
 CREATE POLICY "Allow public read mobile_plans" ON public.mobile_plans
     FOR SELECT
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true);
 
 DROP POLICY IF EXISTS "Allow admin update mobile_plans" ON public.mobile_plans;
 CREATE POLICY "Allow admin update mobile_plans" ON public.mobile_plans
     FOR ALL
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true)
     WITH CHECK (true);
 
@@ -146,34 +217,36 @@ CREATE TABLE IF NOT EXISTS public.staff (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+GRANT ALL ON TABLE public.staff TO anon, authenticated, service_role;
 ALTER TABLE public.staff ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow staff full access" ON public.staff;
 CREATE POLICY "Allow staff full access" ON public.staff
     FOR ALL
-    TO public, anon, authenticated
+    TO anon, authenticated, public
     USING (true)
     WITH CHECK (true);
 
 
 -- 5. SUPABASE STORAGE BUCKET: BANNERS (For Hero Banner file uploads)
--- Note: You can also create the 'banners' bucket via the Supabase Dashboard -> Storage -> New Bucket (Public: Yes)
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('banners', 'banners', true)
 ON CONFLICT (id) DO NOTHING;
 
--- Storage policies allowing public read & authenticated/anon banner upload
+DROP POLICY IF EXISTS "Public Access Banners" ON storage.objects;
 CREATE POLICY "Public Access Banners"
 ON storage.objects FOR SELECT
-TO public, anon, authenticated
+TO anon, authenticated, public
 USING (bucket_id = 'banners');
 
+DROP POLICY IF EXISTS "Allow Banner Uploads" ON storage.objects;
 CREATE POLICY "Allow Banner Uploads"
 ON storage.objects FOR INSERT
-TO public, anon, authenticated
+TO anon, authenticated, public
 WITH CHECK (bucket_id = 'banners');
 
+DROP POLICY IF EXISTS "Allow Banner Deletions" ON storage.objects;
 CREATE POLICY "Allow Banner Deletions"
 ON storage.objects FOR DELETE
-TO public, anon, authenticated
+TO anon, authenticated, public
 USING (bucket_id = 'banners');

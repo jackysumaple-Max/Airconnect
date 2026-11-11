@@ -304,8 +304,9 @@ export const INITIAL_PLANS: Plan[] = [
 ];
 
 export const INITIAL_CMS: CMSConfig = {
-  heroTitle: 'CTExcel Mobile Plans Powered by Telus',
-  heroSubtitle: 'Stay seamlessly connected across Canada, China, the US, and Mexico. Get up to 100GB of 5G data from $27/mo with free roaming, a complimentary Chinese phone number, and unlimited international calling.',
+  heroTitle: 'CTExcel Mobile Plans. Powered by Telus.',
+  heroSubtitle:
+    'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.',
   heroBadge: 'Exclusive Promotional Offer',
   heroPromoPrice: '$27',
   heroPromoData: '50GB',
@@ -318,7 +319,25 @@ export const INITIAL_CMS: CMSConfig = {
   businessHours: 'Mon–Sun: 9:00 AM – 9:00 PM EST',
   dealerLocation: 'Authorized CTExcel Independent Dealer Network · Powered by Telus',
   roamingFinePrint:
-    'Free roaming when traveling to Canada, US, Mexico, and China. Includes a complimentary Chinese phone number and unlimited calling to 9 countries. The China-US-Canada-Mexico roaming plans feature free roaming across all 4 countries, plus unlimited calling to 9 countries.',
+    'Free roaming when traveling to Canada, US, Mexico, and China. Includes a complimentary Chinese phone number and unlimited international calling to 9 countries. Zero roaming friction, powered by Telus 5G.',
+
+  // Feature 2: Left Column (Checkmark Feature List)
+  heroFeature1: 'Free China-Canada Roaming',
+  heroFeature2: 'Complimentary Chinese Phone #',
+  heroFeature3: 'Unlimited Calling to 9 Countries',
+  heroFeature4: 'Free Instant eSIM QR Code',
+
+  // Feature 2: Right Side Graphic Card
+  heroCardTag: 'DUAL NUMBER SERVICE',
+  heroCardTitle: 'Canada + China Dual Line',
+  heroCardPrice: '$27/mo',
+  heroCardSubtitle: 'Telus 5G eSIM',
+  heroBox1Title: '4 Countries',
+  heroBox1Sub: 'Free Roaming',
+  heroBox2Title: 'China #',
+  heroBox2Sub: 'Included Free',
+  heroBox3Title: '9 Nations',
+  heroBox3Sub: 'Unlimited Talk',
 };
 
 export const DEFAULT_MONTHLY_VOLUMES: Record<string, number> = {
@@ -1023,7 +1042,8 @@ export const TelecomStorage = {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.CMS);
       if (data) {
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        return { ...INITIAL_CMS, ...parsed };
       }
     } catch (e) {
       console.error('Failed to read CMS', e);

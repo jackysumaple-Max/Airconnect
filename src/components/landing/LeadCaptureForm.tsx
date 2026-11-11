@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PhoneCall, CheckCircle, Shield, Clock, User, Mail, Phone, Tag, UserCheck, ArrowRight, Sparkles } from 'lucide-react';
+import { PhoneCall, CheckCircle, Shield, Clock, User, Mail, Phone, Tag, UserCheck, ArrowRight, Sparkles, AlertCircle } from 'lucide-react';
 import { Plan, CustomerRecord } from '../../types/telecom';
 
 interface LeadCaptureFormProps {
@@ -239,8 +239,12 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
                   </div>
 
                   {errorMessage && (
-                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
-                      {errorMessage}
+                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3.5 text-xs text-rose-800 space-y-1 animate-shake">
+                      <div className="flex items-center gap-1.5 font-bold text-rose-900">
+                        <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                        <span>Form Submission Notice</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed break-words">{errorMessage}</p>
                     </div>
                   )}
 

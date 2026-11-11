@@ -17,11 +17,24 @@ import {
   Loader2,
   Check,
   AlertCircle,
+  Database,
+  Copy,
+  ExternalLink,
+  ShieldCheck,
+  Layers,
+  Wrench,
+  CheckSquare,
 } from 'lucide-react';
 import {
   uploadHeroBanner,
   saveSiteSettingsToSupabase,
   updatePlanDisplayOrdersInSupabase,
+  testSupabaseAnonymousInsert,
+  getSupabaseDiagnostics,
+  setCustomSupabaseCredentials,
+  isSupabaseConfigured,
+  supabaseUrl,
+  supabaseAnonKey,
 } from '../../services/supabase';
 
 interface CmsEditorProps {
@@ -39,18 +52,39 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
   onSavePlans,
   onPreviewSite,
 }) => {
-  // CMS state
-  const [heroTitle, setHeroTitle] = useState(cms.heroTitle);
-  const [heroSubtitle, setHeroSubtitle] = useState(cms.heroSubtitle);
-  const [heroBadge, setHeroBadge] = useState(cms.heroBadge);
-  const [heroPromoPrice, setHeroPromoPrice] = useState(cms.heroPromoPrice);
-  const [heroPromoData, setHeroPromoData] = useState(cms.heroPromoData);
-  const [heroImage, setHeroImage] = useState(cms.heroImage);
+  // Main CMS state
+  const [heroTitle, setHeroTitle] = useState(cms.heroTitle || 'CTExcel Mobile Plans. Powered by Telus.');
+  const [heroSubtitle, setHeroSubtitle] = useState(
+    cms.heroSubtitle ||
+      'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.'
+  );
+  const [heroBadge, setHeroBadge] = useState(cms.heroBadge || 'Exclusive Promotional Offer');
+  const [heroPromoPrice, setHeroPromoPrice] = useState(cms.heroPromoPrice || '$27');
+  const [heroPromoData, setHeroPromoData] = useState(cms.heroPromoData || '50GB');
+  const [heroImage, setHeroImage] = useState(cms.heroImage || '/assets/aistudio/image_de9eb1a6.png');
   const [announcementBarText, setAnnouncementBarText] = useState(cms.announcementBarText);
   const [announcementActive, setAnnouncementActive] = useState(cms.announcementActive);
   const [supportPhone, setSupportPhone] = useState(cms.supportPhone);
   const [businessHours, setBusinessHours] = useState(cms.businessHours);
   const [roamingFinePrint, setRoamingFinePrint] = useState(cms.roamingFinePrint || '');
+
+  // Feature 2: Left Column (Checkmark Feature List)
+  const [heroFeature1, setHeroFeature1] = useState(cms.heroFeature1 || 'Free China-Canada Roaming');
+  const [heroFeature2, setHeroFeature2] = useState(cms.heroFeature2 || 'Complimentary Chinese Phone #');
+  const [heroFeature3, setHeroFeature3] = useState(cms.heroFeature3 || 'Unlimited Calling to 9 Countries');
+  const [heroFeature4, setHeroFeature4] = useState(cms.heroFeature4 || 'Free Instant eSIM QR Code');
+
+  // Feature 2: Right Side Graphic Card
+  const [heroCardTag, setHeroCardTag] = useState(cms.heroCardTag || 'DUAL NUMBER SERVICE');
+  const [heroCardTitle, setHeroCardTitle] = useState(cms.heroCardTitle || 'Canada + China Dual Line');
+  const [heroCardPrice, setHeroCardPrice] = useState(cms.heroCardPrice || '$27/mo');
+  const [heroCardSubtitle, setHeroCardSubtitle] = useState(cms.heroCardSubtitle || 'Telus 5G eSIM');
+  const [heroBox1Title, setHeroBox1Title] = useState(cms.heroBox1Title || '4 Countries');
+  const [heroBox1Sub, setHeroBox1Sub] = useState(cms.heroBox1Sub || 'Free Roaming');
+  const [heroBox2Title, setHeroBox2Title] = useState(cms.heroBox2Title || 'China #');
+  const [heroBox2Sub, setHeroBox2Sub] = useState(cms.heroBox2Sub || 'Included Free');
+  const [heroBox3Title, setHeroBox3Title] = useState(cms.heroBox3Title || '9 Nations');
+  const [heroBox3Sub, setHeroBox3Sub] = useState(cms.heroBox3Sub || 'Unlimited Talk');
 
   // Upload state
   const [isUploading, setIsUploading] = useState(false);
@@ -69,21 +103,70 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Diagnostic & Supabase Credentials state
+  const [isTestingInsert, setIsTestingInsert] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showDbSettings, setShowDbSettings] = useState(false);
+  const [customSupabaseUrl, setCustomSupabaseUrl] = useState(supabaseUrl);
+  const [customSupabaseAnonKey, setCustomSupabaseAnonKey] = useState(supabaseAnonKey);
+  const [dbSettingsSaved, setDbSettingsSaved] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
   // Available preset user styles
   const PRESET_IMAGES = [
     { label: 'Green Tech Mobile (Default Style #1)', path: '/assets/aistudio/image_de9eb1a6.png' },
     { label: 'Frosted Emerald Glass (Default Style #2)', path: '/assets/aistudio/image_8a94fde1.png' },
   ];
 
+  const RLS_SQL_SNIPPET = `-- Fix Bug 1: Allow public & external devices to insert leads
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;
+ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow anonymous lead insert" ON public.leads;
+CREATE POLICY "Allow anonymous lead insert" ON public.leads
+    FOR INSERT TO anon, authenticated, public WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow staff to select leads" ON public.leads;
+CREATE POLICY "Allow staff to select leads" ON public.leads
+    FOR SELECT TO anon, authenticated, public USING (true);`;
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(RLS_SQL_SNIPPET);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 2500);
+  };
+
+  const handleTestProbe = async () => {
+    setIsTestingInsert(true);
+    setTestResult(null);
+    try {
+      const res = await testSupabaseAnonymousInsert();
+      setTestResult(res);
+    } catch (e: any) {
+      setTestResult({
+        success: false,
+        message: e?.message || 'Failed to complete insert test.',
+      });
+    } finally {
+      setIsTestingInsert(false);
+    }
+  };
+
+  const handleSaveCustomCredentials = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCustomSupabaseCredentials(customSupabaseUrl, customSupabaseAnonKey);
+    setDbSettingsSaved(true);
+    setTimeout(() => setDbSettingsSaved(false), 3000);
+  };
+
   /**
    * Handle File Upload & Replacement for Active Banner Asset Path
-   * Uploads to Supabase Storage bucket 'banners' and deletes previous asset to save space
    */
   const handleBannerFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate image format
     if (!file.type.startsWith('image/')) {
       alert('Please upload a valid image file (PNG, JPG, WebP, or SVG).');
       return;
@@ -93,7 +176,7 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
     setUploadMessage('Uploading banner to Supabase Storage bucket & removing old asset...');
 
     try {
-      const { publicUrl, error } = await uploadHeroBanner(file, heroImage);
+      const { publicUrl } = await uploadHeroBanner(file, heroImage);
       if (publicUrl) {
         setHeroImage(publicUrl);
         setUploadMessage('Banner image successfully uploaded and updated!');
@@ -121,7 +204,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
     const [moved] = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
 
-    // Re-assign display_order (1, 2, 3...)
     const indexed = reordered.map((plan, i) => ({
       ...plan,
       display_order: i + 1,
@@ -150,7 +232,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
     const [moved] = reordered.splice(draggedPlanIndex, 1);
     reordered.splice(targetIndex, 0, moved);
 
-    // Re-assign display_order (1, 2, 3...)
     const indexed = reordered.map((plan, i) => ({
       ...plan,
       display_order: i + 1,
@@ -179,19 +260,30 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
       supportPhone,
       businessHours,
       roamingFinePrint,
+      heroFeature1,
+      heroFeature2,
+      heroFeature3,
+      heroFeature4,
+      heroCardTag,
+      heroCardTitle,
+      heroCardPrice,
+      heroCardSubtitle,
+      heroBox1Title,
+      heroBox1Sub,
+      heroBox2Title,
+      heroBox2Sub,
+      heroBox3Title,
+      heroBox3Sub,
     };
 
-    // Ensure display_order is 1-indexed
     const finalizedPlans = editablePlans.map((p, i) => ({
       ...p,
       display_order: i + 1,
     }));
 
-    // 1. Notify parent component to update frontend state & localStorage
     onSaveCms(updatedCms);
     onSavePlans(finalizedPlans);
 
-    // 2. Persist to Supabase site_settings and mobile_plans
     await saveSiteSettingsToSupabase({
       heroTitle,
       heroSubtitle,
@@ -199,6 +291,20 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
       heroBadge,
       heroPromoPrice,
       heroPromoData,
+      heroFeature1,
+      heroFeature2,
+      heroFeature3,
+      heroFeature4,
+      heroCardTag,
+      heroCardTitle,
+      heroCardPrice,
+      heroCardSubtitle,
+      heroBox1Title,
+      heroBox1Sub,
+      heroBox2Title,
+      heroBox2Sub,
+      heroBox3Title,
+      heroBox3Sub,
     });
 
     await updatePlanDisplayOrdersInSupabase(finalizedPlans);
@@ -259,7 +365,7 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
             Frontend Content Management System (CMS)
           </h2>
           <p className="text-xs text-slate-500">
-            Control the public hero banner, headlines, and drag-and-drop plan order in real-time.
+            Control the hero headlines, checkmarks, right-side graphic cards, pricing, and plan sequence.
           </p>
         </div>
 
@@ -295,13 +401,13 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
         </div>
       </div>
 
-      {/* SECTION 1: Dynamic Hero Banner Management (Image & Text) */}
+      {/* SECTION 1: Dynamic Hero Banner & Content Management */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-emerald-700" />
             <h3 className="text-base font-bold text-slate-900">
-              Dynamic Hero Banner Management (Image & Text)
+              Hero Section Headline & Sub-Header Copy
             </h3>
           </div>
           <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
@@ -344,12 +450,12 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
           </div>
         </div>
 
-        {/* Editable Banner Text: Headline & Sub-text */}
+        {/* Main Header & Promo Badge */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs font-bold text-slate-800">
-                Banner Headline
+                Main Header (H1)
               </label>
               <span className="text-[10px] text-emerald-700 font-mono font-medium">site_settings.hero_title</span>
             </div>
@@ -357,11 +463,11 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
               type="text"
               value={heroTitle}
               onChange={(e) => setHeroTitle(e.target.value)}
-              placeholder="e.g. CTExcel Mobile Plans Powered by Telus"
+              placeholder="CTExcel Mobile Plans. Powered by Telus."
               className="w-full rounded-xl border border-slate-200 p-2.5 text-xs text-slate-900 focus:border-emerald-500 outline-none font-medium"
             />
             <p className="text-[11px] text-slate-500 mt-1">
-              Main H1 display text appearing at the top of the frontend homepage.
+              Recommended: <span className="font-semibold text-slate-700">CTExcel Mobile Plans. Powered by Telus.</span>
             </p>
           </div>
 
@@ -379,16 +485,14 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
               placeholder="Exclusive Promotional Offer"
               className="w-full rounded-xl border border-slate-200 p-2.5 text-xs text-slate-900 focus:border-emerald-500 outline-none"
             />
-            <p className="text-[11px] text-slate-500 mt-1">
-              Accent pill badge rendered directly above the headline.
-            </p>
           </div>
         </div>
 
+        {/* Streamlined Sub-Header */}
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="block text-xs font-bold text-slate-800">
-              Banner Sub-text
+              New Sub-Header Text (Streamlined High-Conversion Copy)
             </label>
             <span className="text-[10px] text-emerald-700 font-mono font-medium">site_settings.hero_subtitle</span>
           </div>
@@ -396,15 +500,15 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
             rows={2}
             value={heroSubtitle}
             onChange={(e) => setHeroSubtitle(e.target.value)}
-            placeholder="Stay seamlessly connected across Canada, China, the US, and Mexico..."
+            placeholder="Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries."
             className="w-full rounded-xl border border-slate-200 p-2.5 text-xs text-slate-900 focus:border-emerald-500 outline-none font-normal"
           />
           <p className="text-[11px] text-slate-500 mt-1">
-            Replaces any hardcoded sub-text on the frontend hero section dynamically.
+            Focuses strictly on price, data amounts, and specific cross-border roaming countries.
           </p>
         </div>
 
-        {/* Dynamic Weekly/Monthly Spotlight Price */}
+        {/* Featured Price & Data */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-emerald-50/60 p-4 rounded-xl border border-emerald-100">
           <div>
             <label className="block text-xs font-bold text-emerald-900 mb-1">
@@ -433,6 +537,179 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
           </div>
         </div>
 
+        {/* FEATURE 2: Left Column (Checkmark Feature List) */}
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <CheckSquare className="h-4 w-4 text-emerald-700" />
+            <span className="text-xs font-bold text-emerald-950 uppercase tracking-wide">
+              Left Column: 4 Checkmark Features (Feature 2)
+            </span>
+          </div>
+          <p className="text-[11px] text-emerald-800">
+            Edit the 4 primary checkmark value propositions displayed inside the featured offer card:
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Checkmark Item #1</label>
+              <input
+                type="text"
+                value={heroFeature1}
+                onChange={(e) => setHeroFeature1(e.target.value)}
+                placeholder="Free China-Canada Roaming"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Checkmark Item #2</label>
+              <input
+                type="text"
+                value={heroFeature2}
+                onChange={(e) => setHeroFeature2(e.target.value)}
+                placeholder="Complimentary Chinese Phone #"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Checkmark Item #3</label>
+              <input
+                type="text"
+                value={heroFeature3}
+                onChange={(e) => setHeroFeature3(e.target.value)}
+                placeholder="Unlimited Calling to 9 Countries"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Checkmark Item #4</label>
+              <input
+                type="text"
+                value={heroFeature4}
+                onChange={(e) => setHeroFeature4(e.target.value)}
+                placeholder="Free Instant eSIM QR Code"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* FEATURE 2: Right Side Graphic Card & Badges */}
+        <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-teal-700" />
+            <span className="text-xs font-bold text-teal-950 uppercase tracking-wide">
+              Right-Side Graphic Card & Bottom Badges (Feature 2)
+            </span>
+          </div>
+          <p className="text-[11px] text-teal-800">
+            Customize the floating card and three feature badges on the right-side visual banner:
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Top Left Tag</label>
+              <input
+                type="text"
+                value={heroCardTag}
+                onChange={(e) => setHeroCardTag(e.target.value)}
+                placeholder="DUAL NUMBER SERVICE"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Main Card Title</label>
+              <input
+                type="text"
+                value={heroCardTitle}
+                onChange={(e) => setHeroCardTitle(e.target.value)}
+                placeholder="Canada + China Dual Line"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Card Price Display</label>
+              <input
+                type="text"
+                value={heroCardPrice}
+                onChange={(e) => setHeroCardPrice(e.target.value)}
+                placeholder="$27/mo"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-teal-500 font-bold"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Card Price Subtitle</label>
+              <input
+                type="text"
+                value={heroCardSubtitle}
+                onChange={(e) => setHeroCardSubtitle(e.target.value)}
+                placeholder="Telus 5G eSIM"
+                className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-900 outline-none focus:border-teal-500"
+              />
+            </div>
+          </div>
+
+          <div className="border-t border-teal-200/60 pt-3">
+            <span className="text-[11px] font-bold text-teal-900 block mb-2">
+              Bottom 3 Graphic Feature Boxes
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Box 1</span>
+                <input
+                  type="text"
+                  value={heroBox1Title}
+                  onChange={(e) => setHeroBox1Title(e.target.value)}
+                  placeholder="4 Countries"
+                  className="w-full rounded border border-slate-200 p-1.5 text-xs font-bold"
+                />
+                <input
+                  type="text"
+                  value={heroBox1Sub}
+                  onChange={(e) => setHeroBox1Sub(e.target.value)}
+                  placeholder="Free Roaming"
+                  className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-600"
+                />
+              </div>
+
+              <div className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Box 2</span>
+                <input
+                  type="text"
+                  value={heroBox2Title}
+                  onChange={(e) => setHeroBox2Title(e.target.value)}
+                  placeholder="China #"
+                  className="w-full rounded border border-slate-200 p-1.5 text-xs font-bold"
+                />
+                <input
+                  type="text"
+                  value={heroBox2Sub}
+                  onChange={(e) => setHeroBox2Sub(e.target.value)}
+                  placeholder="Included Free"
+                  className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-600"
+                />
+              </div>
+
+              <div className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Box 3</span>
+                <input
+                  type="text"
+                  value={heroBox3Title}
+                  onChange={(e) => setHeroBox3Title(e.target.value)}
+                  placeholder="9 Nations"
+                  className="w-full rounded border border-slate-200 p-1.5 text-xs font-bold"
+                />
+                <input
+                  type="text"
+                  value={heroBox3Sub}
+                  onChange={(e) => setHeroBox3Sub(e.target.value)}
+                  placeholder="Unlimited Talk"
+                  className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-600"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Hero Visual Asset & Image Upload */}
         <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -446,7 +723,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
               </p>
             </div>
 
-            {/* Hidden file input */}
             <input
               ref={fileInputRef}
               type="file"
@@ -477,7 +753,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
             </div>
           )}
 
-          {/* Active Banner Asset Path & Preview */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-white p-3.5 rounded-xl border border-slate-200">
             <div className="md:col-span-3 flex justify-center">
               <div className="relative h-24 w-full max-w-[180px] overflow-hidden rounded-lg border border-slate-300 bg-slate-100 shadow-xs">
@@ -500,7 +775,7 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] text-slate-500 font-medium">Or choose quick preset:</span>
+                <span className="text-[11px] text-slate-500 font-medium">Quick presets:</span>
                 {PRESET_IMAGES.map((preset) => (
                   <button
                     key={preset.path}
@@ -532,13 +807,175 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
             placeholder="Free roaming when traveling to Canada, US, Mexico, and China..."
             className="w-full rounded-xl border border-slate-200 p-2.5 text-xs text-slate-900 focus:border-emerald-500 outline-none font-medium"
           />
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            Displays directly beneath the plans grid on the public frontend.
-          </p>
         </div>
       </div>
 
-      {/* SECTION 2: Drag-and-Drop Plan Reordering & Pricing */}
+      {/* SECTION 2: Supabase Public Mobile Submission & Connection Diagnostics (Bug 1 Fix) */}
+      <div className="rounded-2xl border border-indigo-200 bg-white p-6 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100 pb-3">
+          <div className="flex items-center gap-2">
+            <Database className="h-5 w-5 text-indigo-700" />
+            <div>
+              <h3 className="text-base font-bold text-slate-900">
+                Supabase Database & Public Mobile Submission Diagnostics (Bug 1 Fix)
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Verify that public website visitors on mobile phones & external PCs can insert leads into Supabase.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={isTestingInsert}
+              onClick={handleTestProbe}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2 text-xs font-bold text-white transition-colors shadow-2xs disabled:opacity-50"
+            >
+              {isTestingInsert ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShieldCheck className="h-3.5 w-3.5" />
+              )}
+              <span>{isTestingInsert ? 'Testing Probe...' : 'Test Public Anon Insert'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDbSettings(!showDbSettings)}
+              className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Wrench className="h-3.5 w-3.5" />
+              <span>{showDbSettings ? 'Hide Config' : 'Configure Keys'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Live Diagnostics Card */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Configuration Status</span>
+            <div className="mt-1 flex items-center gap-1.5 font-bold">
+              {isSupabaseConfigured ? (
+                <span className="text-emerald-700 flex items-center gap-1">
+                  <CheckCircle2 className="h-4 w-4" /> Configured & Active
+                </span>
+              ) : (
+                <span className="text-amber-700 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" /> Missing / Incomplete
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Supabase Endpoint URL</span>
+            <div className="mt-1 font-mono text-[11px] text-slate-800 truncate" title={supabaseUrl}>
+              {supabaseUrl || '(missing in build)'}
+            </div>
+          </div>
+
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Anon Key Status</span>
+            <div className="mt-1 font-mono text-[11px] text-slate-800 truncate">
+              {supabaseAnonKey ? `${supabaseAnonKey.slice(0, 8)}...${supabaseAnonKey.slice(-6)}` : '(missing)'}
+            </div>
+          </div>
+        </div>
+
+        {/* Test Probe Result Banner */}
+        {testResult && (
+          <div
+            className={`p-3.5 rounded-xl border text-xs ${
+              testResult.success
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-rose-50 border-rose-200 text-rose-900'
+            }`}
+          >
+            <div className="flex items-center gap-2 font-bold mb-1">
+              {testResult.success ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+              )}
+              <span>{testResult.success ? 'Probe Succeeded' : 'Probe Rejected by Supabase'}</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">{testResult.message}</p>
+          </div>
+        )}
+
+        {/* SQL Fix Box for Supabase SQL Editor */}
+        <div className="rounded-xl border border-slate-200 bg-slate-900 text-slate-100 p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-400">
+              Required RLS Policy SQL for Supabase SQL Editor
+            </span>
+            <button
+              type="button"
+              onClick={handleCopySql}
+              className="flex items-center gap-1 text-[11px] font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded transition-colors"
+            >
+              {copiedSql ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              <span>{copiedSql ? 'Copied!' : 'Copy SQL'}</span>
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Run this in your Supabase SQL Editor to allow public mobile visitors to insert callback requests without error:
+          </p>
+          <pre className="text-[11px] font-mono bg-black/50 p-2.5 rounded overflow-x-auto text-emerald-300">
+            {RLS_SQL_SNIPPET}
+          </pre>
+        </div>
+
+        {/* Optional Manual Key Configuration (For Hostinger deployments if build-time env vars were omitted) */}
+        {showDbSettings && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-indigo-950">
+                Production Key Override (Hostinger / Custom Domain)
+              </span>
+              {dbSettingsSaved && (
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                  Saved!
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">VITE_SUPABASE_URL</label>
+                <input
+                  type="text"
+                  value={customSupabaseUrl}
+                  onChange={(e) => setCustomSupabaseUrl(e.target.value)}
+                  placeholder="https://xyz.supabase.co"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">VITE_SUPABASE_ANON_KEY</label>
+                <input
+                  type="password"
+                  value={customSupabaseAnonKey}
+                  onChange={(e) => setCustomSupabaseAnonKey(e.target.value)}
+                  placeholder="eyJhbGciOiJIUz..."
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2 font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveCustomCredentials}
+                className="rounded-lg bg-indigo-600 text-white font-bold px-4 py-1.5 text-xs hover:bg-indigo-700"
+              >
+                Apply Database Credentials
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 3: Drag-and-Drop Plan Reordering & Pricing */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
@@ -581,7 +1018,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
               {/* Header row with drag handle and move controls */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
                 <div className="flex items-center gap-3">
-                  {/* Grip Handle for Drag and Drop */}
                   <div
                     className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-700 transition-colors rounded"
                     title="Drag to reorder plan sequence"
@@ -589,7 +1025,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
                     <GripVertical className="h-5 w-5" />
                   </div>
 
-                  {/* Position Badge & display_order */}
                   <div className="flex items-center gap-2">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0F3E2E] text-white text-[11px] font-bold">
                       {idx + 1}
@@ -609,7 +1044,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* Move Up / Move Down buttons */}
                   <div className="flex items-center border border-slate-200 rounded-lg bg-white overflow-hidden shadow-xs">
                     <button
                       type="button"
@@ -740,7 +1174,6 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
                 </div>
               </div>
 
-              {/* Features list text area (one per line) */}
               <div>
                 <label className="block text-slate-600 font-semibold text-xs mb-1">
                   Plan Bullet Features (one feature per line)

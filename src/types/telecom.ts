@@ -144,6 +144,24 @@ export interface CMSConfig {
   businessHours: string;
   dealerLocation: string;
   roamingFinePrint: string;
+
+  // Feature 2: Left Column Checkmark Feature List
+  heroFeature1: string; // "Free China-Canada Roaming"
+  heroFeature2: string; // "Complimentary Chinese Phone #"
+  heroFeature3: string; // "Unlimited Calling to 9 Countries"
+  heroFeature4: string; // "Free Instant eSIM QR Code"
+
+  // Feature 2: Right Side Graphic Card
+  heroCardTag: string; // "DUAL NUMBER SERVICE"
+  heroCardTitle: string; // "Canada + China Dual Line"
+  heroCardPrice: string; // "$27/mo"
+  heroCardSubtitle: string; // "Telus 5G eSIM"
+  heroBox1Title: string; // "4 Countries"
+  heroBox1Sub: string; // "Free Roaming"
+  heroBox2Title: string; // "China #"
+  heroBox2Sub: string; // "Included Free"
+  heroBox3Title: string; // "9 Nations"
+  heroBox3Sub: string; // "Unlimited Talk"
 }
 
 export interface StaffRep {

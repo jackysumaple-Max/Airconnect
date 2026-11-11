@@ -1,38 +1,104 @@
 import { createClient, SupabaseClient, User as SupabaseUser } from '@supabase/supabase-js';
 import { CustomerRecord } from '../types/telecom';
 
-// Retrieve Supabase credentials supporting both standard Vite env prefix (VITE_) 
-// and raw Hostinger deployment environment variables
-const supabaseUrl =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
-  (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
-  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
-  '';
+// Retrieve Supabase credentials supporting Vite env prefix (VITE_),
+// raw Hostinger deployment variables, and browser runtime configuration fallback
+function getInitialSupabaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const local = localStorage.getItem('ctexcel_supabase_url') || localStorage.getItem('VITE_SUPABASE_URL');
+    if (local && local.trim()) return local.trim();
+    const win = window as any;
+    if (win.__SUPABASE_URL__) return win.__SUPABASE_URL__;
+    if (win.__ENV__?.VITE_SUPABASE_URL) return win.__ENV__.VITE_SUPABASE_URL;
+  }
+  return (
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
+    (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
+    (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
+    ''
+  ).trim();
+}
 
-const supabaseAnonKey =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
-  (typeof process !== 'undefined' && process.env?.SUPABASE_ANON_KEY) ||
-  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) ||
-  '';
+function getInitialSupabaseKey(): string {
+  if (typeof window !== 'undefined') {
+    const local = localStorage.getItem('ctexcel_supabase_anon_key') || localStorage.getItem('VITE_SUPABASE_ANON_KEY');
+    if (local && local.trim()) return local.trim();
+    const win = window as any;
+    if (win.__SUPABASE_ANON_KEY__) return win.__SUPABASE_ANON_KEY__;
+    if (win.__ENV__?.VITE_SUPABASE_ANON_KEY) return win.__ENV__.VITE_SUPABASE_ANON_KEY;
+  }
+  return (
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
+    (typeof process !== 'undefined' && process.env?.SUPABASE_ANON_KEY) ||
+    (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) ||
+    ''
+  ).trim();
+}
 
-export const isSupabaseConfigured = Boolean(
-  supabaseUrl &&
-  supabaseAnonKey &&
-  supabaseUrl !== 'https://your-project.supabase.co' &&
-  !supabaseUrl.includes('placeholder')
-);
+export let supabaseUrl = getInitialSupabaseUrl();
+export let supabaseAnonKey = getInitialSupabaseKey();
+
+export function checkIsSupabaseConfigured(url: string, key: string): boolean {
+  return Boolean(
+    url &&
+    key &&
+    url.startsWith('https://') &&
+    url !== 'https://your-project.supabase.co' &&
+    url !== 'https://your-project-id.supabase.co' &&
+    !url.includes('placeholder') &&
+    !url.includes('localhost') &&
+    key !== 'your-anon-public-key' &&
+    key !== 'placeholder-anon-key'
+  );
+}
+
+export let isSupabaseConfigured = checkIsSupabaseConfigured(supabaseUrl, supabaseAnonKey);
 
 // Fallback dummy client if credentials aren't set yet, avoiding crash on page load
-const fallbackUrl = supabaseUrl || 'https://placeholder.supabase.co';
-const fallbackKey = supabaseAnonKey || 'placeholder-anon-key';
+const fallbackUrl = 'https://placeholder.supabase.co';
+const fallbackKey = 'placeholder-anon-key';
 
-export const supabase: SupabaseClient = createClient(fallbackUrl, fallbackKey, {
+export let supabase: SupabaseClient = createClient(supabaseUrl || fallbackUrl, supabaseAnonKey || fallbackKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
 });
+
+/**
+ * Configure or update Supabase credentials dynamically (e.g. from Hostinger or Admin Diagnostics)
+ */
+export function setCustomSupabaseCredentials(url: string, key: string) {
+  const cleanUrl = url.trim();
+  const cleanKey = key.trim();
+  if (typeof window !== 'undefined') {
+    if (cleanUrl) localStorage.setItem('ctexcel_supabase_url', cleanUrl);
+    if (cleanKey) localStorage.setItem('ctexcel_supabase_anon_key', cleanKey);
+  }
+  supabaseUrl = cleanUrl;
+  supabaseAnonKey = cleanKey;
+  isSupabaseConfigured = checkIsSupabaseConfigured(cleanUrl, cleanKey);
+  supabase = createClient(cleanUrl || fallbackUrl, cleanKey || fallbackKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+}
+
+/**
+ * Diagnostic helper: Returns current connection health and environment details
+ */
+export function getSupabaseDiagnostics() {
+  return {
+    isConfigured: isSupabaseConfigured,
+    url: supabaseUrl || '(not configured)',
+    maskedKey: supabaseAnonKey ? `${supabaseAnonKey.slice(0, 6)}...${supabaseAnonKey.slice(-4)}` : '(missing)',
+    isHttps: supabaseUrl.startsWith('https://'),
+  };
+}
 
 /**
  * Sign in using live encrypted credentials in Supabase Auth
@@ -148,12 +214,24 @@ export async function updateStaffPasswordInSupabase(
  * Connects directly to the 'leads' table (with fallback to 'customers' table).
  * Catches insertion errors and Row Level Security (RLS) policy violations with detailed console.error logs.
  */
-export async function insertLeadToSupabase(lead: CustomerRecord) {
+export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
+  data: any;
+  error: Error | null;
+  rejectionReason?: string;
+}> {
   if (!isSupabaseConfigured) {
-    return { data: null, error: new Error('Supabase is not configured.') };
+    const reason = !supabaseUrl
+      ? 'VITE_SUPABASE_URL is missing in the production deployment environment.'
+      : 'VITE_SUPABASE_ANON_KEY is missing or invalid in the production deployment environment.';
+    console.error('CRITICAL: Supabase cannot save lead because credentials are not configured:', reason);
+    return {
+      data: null,
+      error: new Error(`Database connection not configured: ${reason}`),
+      rejectionReason: reason,
+    };
   }
 
-  // Construct structured payload compatible with common Supabase column naming conventions
+  // Construct structured payload compatible with Supabase column naming conventions
   const leadPayload = {
     id: lead.id,
     first_name: lead.firstName,
@@ -184,19 +262,24 @@ export async function insertLeadToSupabase(lead: CustomerRecord) {
         hint: error.hint,
       });
 
+      let rejectionReason = error.message;
+
       // Check for Row Level Security (RLS) policy rejection (error code 42501)
       if (
         error.code === '42501' ||
         error.message.toLowerCase().includes('row-level security') ||
         error.message.toLowerCase().includes('policy')
       ) {
+        rejectionReason =
+          'RLS Policy Rejection (Code 42501): The public anon role is not authorized to INSERT into table "leads". Please run the SQL snippet in supabase_setup.sql in your Supabase SQL Editor to grant anonymous INSERT permissions.';
         console.error(
           'CRITICAL RLS POLICY ERROR ON SUPABASE "leads" TABLE:\n' +
-          'Row Level Security is enabled on table "leads", but no policy allows anonymous INSERT from the public frontend.\n' +
+          'Row Level Security is enabled on table "leads", but no policy allows anonymous INSERT from public website visitors.\n' +
           'To fix this, run this SQL in your Supabase SQL Editor:\n' +
+          '  GRANT USAGE ON SCHEMA public TO anon, authenticated;\n' +
+          '  GRANT ALL ON TABLE public.leads TO anon, authenticated, service_role;\n' +
           '  ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;\n' +
-          '  CREATE POLICY "Allow anonymous lead insert" ON public.leads FOR INSERT WITH CHECK (true);\n' +
-          '  CREATE POLICY "Allow authenticated read leads" ON public.leads FOR SELECT USING (true);'
+          '  CREATE POLICY "Allow anonymous lead insert" ON public.leads FOR INSERT TO anon, authenticated, public WITH CHECK (true);'
         );
       }
 
@@ -206,19 +289,31 @@ export async function insertLeadToSupabase(lead: CustomerRecord) {
         const custRes = await supabase.from('customers').insert([leadPayload]).select();
         if (custRes.error) {
           console.error('Supabase fallback insert to "customers" table also failed:', custRes.error.message, custRes.error);
-          return { data: null, error: custRes.error };
+          return {
+            data: null,
+            error: new Error(`Table "leads" does not exist and fallback failed: ${custRes.error.message}`),
+            rejectionReason: `Tables "leads" and "customers" do not exist in Supabase database. Please execute supabase_setup.sql.`,
+          };
         }
         return { data: custRes.data, error: null };
       }
 
-      return { data: null, error };
+      return {
+        data: null,
+        error: new Error(rejectionReason),
+        rejectionReason,
+      };
     }
 
     console.log('Lead successfully inserted into Supabase "leads" table:', lead.id);
     return { data, error: null };
   } catch (err: any) {
     console.error('Unexpected exception during Supabase lead insertion:', err);
-    return { data: null, error: err };
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+      rejectionReason: err?.message || 'Network error connecting to Supabase database.',
+    };
   }
 }
 
@@ -497,8 +592,8 @@ export async function uploadHeroBanner(
 }
 
 /**
- * 2. SITE SETTINGS (CMS Headline, Sub-text, Hero Image):
- * Persists banner headline, sub-text, and image URL to the 'site_settings' table in Supabase.
+ * 2. SITE SETTINGS (CMS Headline, Sub-text, Hero Image, Checkmark List & Right Card):
+ * Persists all editable hero blocks to the 'site_settings' table in Supabase.
  */
 export async function saveSiteSettingsToSupabase(settings: {
   heroTitle?: string;
@@ -507,12 +602,28 @@ export async function saveSiteSettingsToSupabase(settings: {
   heroBadge?: string;
   heroPromoPrice?: string;
   heroPromoData?: string;
+  // Feature 2: Left Column Checkmark List
+  heroFeature1?: string;
+  heroFeature2?: string;
+  heroFeature3?: string;
+  heroFeature4?: string;
+  // Feature 2: Right Graphic Card
+  heroCardTag?: string;
+  heroCardTitle?: string;
+  heroCardPrice?: string;
+  heroCardSubtitle?: string;
+  heroBox1Title?: string;
+  heroBox1Sub?: string;
+  heroBox2Title?: string;
+  heroBox2Sub?: string;
+  heroBox3Title?: string;
+  heroBox3Sub?: string;
 }) {
   if (!isSupabaseConfigured) {
     return { success: true, error: null };
   }
 
-  const payload = {
+  const payload: Record<string, any> = {
     id: 1, // Single-row config table
     hero_title: settings.heroTitle,
     hero_subtitle: settings.heroSubtitle,
@@ -520,6 +631,20 @@ export async function saveSiteSettingsToSupabase(settings: {
     hero_badge: settings.heroBadge,
     hero_promo_price: settings.heroPromoPrice,
     hero_promo_data: settings.heroPromoData,
+    hero_feature_1: settings.heroFeature1,
+    hero_feature_2: settings.heroFeature2,
+    hero_feature_3: settings.heroFeature3,
+    hero_feature_4: settings.heroFeature4,
+    hero_card_tag: settings.heroCardTag,
+    hero_card_title: settings.heroCardTitle,
+    hero_card_price: settings.heroCardPrice,
+    hero_card_subtitle: settings.heroCardSubtitle,
+    hero_box_1_title: settings.heroBox1Title,
+    hero_box_1_sub: settings.heroBox1Sub,
+    hero_box_2_title: settings.heroBox2Title,
+    hero_box_2_sub: settings.heroBox2Sub,
+    hero_box_3_title: settings.heroBox3Title,
+    hero_box_3_sub: settings.heroBox3Sub,
     updated_at: new Date().toISOString(),
   };
 
@@ -541,7 +666,7 @@ export async function saveSiteSettingsToSupabase(settings: {
 }
 
 /**
- * Fetches site settings (Hero headline, subtext, image) from Supabase.
+ * Fetches site settings (Hero headline, subtext, image, features, card texts) from Supabase.
  */
 export async function fetchSiteSettingsFromSupabase() {
   if (!isSupabaseConfigured) return { data: null, error: null };
@@ -560,11 +685,89 @@ export async function fetchSiteSettingsFromSupabase() {
         heroBadge: data.hero_badge,
         heroPromoPrice: data.hero_promo_price,
         heroPromoData: data.hero_promo_data,
+        heroFeature1: data.hero_feature_1,
+        heroFeature2: data.hero_feature_2,
+        heroFeature3: data.hero_feature_3,
+        heroFeature4: data.hero_feature_4,
+        heroCardTag: data.hero_card_tag,
+        heroCardTitle: data.hero_card_title,
+        heroCardPrice: data.hero_card_price,
+        heroCardSubtitle: data.hero_card_subtitle,
+        heroBox1Title: data.hero_box_1_title,
+        heroBox1Sub: data.hero_box_1_sub,
+        heroBox2Title: data.hero_box_2_title,
+        heroBox2Sub: data.hero_box_2_sub,
+        heroBox3Title: data.hero_box_3_title,
+        heroBox3Sub: data.hero_box_3_sub,
       },
       error: null,
     };
   } catch (err: any) {
     return { data: null, error: err };
+  }
+}
+
+/**
+ * Live Diagnostic Tool: Tests an anonymous lead insert directly against the Supabase database
+ * to verify that Row Level Security (RLS) policies allow anonymous submissions from public visitors.
+ */
+export async function testSupabaseAnonymousInsert(): Promise<{
+  success: boolean;
+  message: string;
+  latencyMs?: number;
+  details?: any;
+}> {
+  const start = Date.now();
+  if (!isSupabaseConfigured) {
+    return {
+      success: false,
+      message: `Supabase credentials not configured. URL: ${supabaseUrl || '(missing)'}`,
+    };
+  }
+
+  const testId = `TEST-${Date.now().toString().slice(-4)}`;
+  const testPayload = {
+    id: testId,
+    first_name: 'Connectivity',
+    last_name: 'Test',
+    full_name: 'Connectivity Test',
+    email: 'test@ctexcel.ca',
+    phone: '4165550100',
+    preferred_plan_name: '$27 / 50GB Plan',
+    status: 'lead',
+    notes: '[Diagnostic RLS probe - auto-cleaned]',
+  };
+
+  try {
+    const { error: insertErr } = await supabase.from('leads').insert([testPayload]).select();
+    const latencyMs = Date.now() - start;
+
+    if (insertErr) {
+      let advice = insertErr.message;
+      if (insertErr.code === '42501' || insertErr.message.toLowerCase().includes('row-level security')) {
+        advice = 'RLS Policy Rejection (42501): The public anon role is blocked from inserting into table "leads". Please run the SQL snippet in supabase_setup.sql in your Supabase SQL Editor.';
+      }
+      return {
+        success: false,
+        message: `Insert test failed (${insertErr.code || 'ERR'}): ${advice}`,
+        details: insertErr,
+      };
+    }
+
+    // Clean up test row
+    await supabase.from('leads').delete().eq('id', testId);
+
+    return {
+      success: true,
+      message: `Supabase anonymous INSERT test succeeded in ${latencyMs}ms! RLS policies allow public visitors on mobile & external PCs to submit leads.`,
+      latencyMs,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Exception during test: ${err?.message || err}`,
+      details: err,
+    };
   }
 }
 
