@@ -72,12 +72,21 @@ export default function App() {
     setStaffMembers(TelecomStorage.getStaff());
   }, []);
 
-  // Navigation helpers for unlisted portal
+  // Navigation helpers for dealer portal
   const navigateToStaffPortal = useCallback(() => {
     try {
       window.history.pushState({}, '', '/staff-portal');
     } catch (e) {
       window.location.hash = '#/staff-portal';
+    }
+    setIsStaffRoute(true);
+  }, []);
+
+  const navigateToAdminPortal = useCallback(() => {
+    try {
+      window.history.pushState({}, '', '/staff-portal/admin');
+    } catch (e) {
+      window.location.hash = '#/staff-portal/admin';
     }
     setIsStaffRoute(true);
   }, []);
@@ -263,8 +272,12 @@ export default function App() {
         <FaqSection />
       </main>
 
-      {/* Public Footer (Zero CRM links) */}
-      <Footer cms={cms} />
+      {/* Public Footer with Admin & Staff Portal login buttons */}
+      <Footer
+        cms={cms}
+        onNavigateToStaffPortal={navigateToStaffPortal}
+        onNavigateToAdminPortal={navigateToAdminPortal}
+      />
 
       {/* Hidden Unlisted Access Hint for Evaluators:
           Double-clicking the quiet copyright line or typing /staff-portal navigates to the portal */}
