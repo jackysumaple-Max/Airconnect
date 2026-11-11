@@ -41,10 +41,14 @@ export async function signInWithSupabase(emailOrUsername: string, password: stri
     return { data: null, error: new Error('Supabase credentials not configured in environment variables.') };
   }
 
-  // Supabase Auth requires an email format. If user typed a username, attempt email fallback
-  const email = emailOrUsername.includes('@')
-    ? emailOrUsername.trim()
-    : `${emailOrUsername.trim().toLowerCase()}@ctexceldealer.com`;
+  let email = emailOrUsername.trim();
+  if (!email.includes('@')) {
+    if (email.toLowerCase() === 'jacky' || email.toLowerCase() === 'admin') {
+      email = 'Jackysumaple@gmail.com';
+    } else {
+      email = `${email.toLowerCase()}@ctexceldealer.com`;
+    }
+  }
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
