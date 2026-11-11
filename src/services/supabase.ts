@@ -11,12 +11,15 @@ function getInitialSupabaseUrl(): string {
     if (win.__SUPABASE_URL__) return win.__SUPABASE_URL__;
     if (win.__ENV__?.VITE_SUPABASE_URL) return win.__ENV__.VITE_SUPABASE_URL;
   }
-  return (
+  const fromEnv = (
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
     (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
     (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
     ''
   ).trim();
+
+  // Fallback directly to the airwireless.ca Supabase project URL from Hostinger configuration
+  return fromEnv || 'https://xnnszqnghxoqplniiaiv.supabase.co';
 }
 
 function getInitialSupabaseKey(): string {
@@ -255,10 +258,28 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
   errorDetails?: SupabaseErrorDetails;
   tableUsed?: string;
 }> {
+  // 1. Detect if key is a Supabase Management token (sb_secret_) instead of project anon JWT key
+  if (supabaseAnonKey.startsWith('sb_secret_') || supabaseAnonKey.startsWith('sbp_')) {
+    const reason = 'Invalid Supabase API Key: Hostinger VITE_SUPABASE_ANON_KEY is set to a Management token ("sb_secret_..."). PostgREST requires the "anon public" key starting with "eyJhbGciOi...".';
+    console.error('CRITICAL:', reason);
+    return {
+      data: null,
+      error: new Error(reason),
+      rejectionReason: reason,
+      errorDetails: {
+        message: reason,
+        details: 'Go to your Supabase Dashboard -> Project Settings -> API. Copy the "anon public" key (starts with eyJhbGciOi...) and update VITE_SUPABASE_ANON_KEY in Hostinger.',
+        code: 'UNAUTHORIZED_INVALID_API_KEY',
+        table: 'Airwireless',
+      },
+      tableUsed: 'Airwireless',
+    };
+  }
+
   if (!isSupabaseConfigured) {
     const reason = !supabaseUrl
       ? 'VITE_SUPABASE_URL is missing in the production deployment environment.'
-      : 'VITE_SUPABASE_ANON_KEY is missing or invalid in the production deployment environment.';
+      : 'VITE_SUPABASE_ANON_KEY is missing in the production deployment environment.';
     console.error('CRITICAL: Supabase credentials not configured:', reason);
     return {
       data: null,
@@ -266,7 +287,7 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
       rejectionReason: reason,
       errorDetails: {
         message: reason,
-        details: 'Neither environment variables nor localStorage credentials were provided.',
+        details: 'In Hostinger, set VITE_SUPABASE_ANON_KEY with your project anon public key (starts with eyJhbGciOi...).',
         code: 'NO_CONFIG',
         table: 'Airwireless',
       },
@@ -774,6 +795,15 @@ export async function testSupabaseAnonymousInsert(): Promise<{
   tableUsed?: string;
 }> {
   const start = Date.now();
+  if (supabaseAnonKey.startsWith('sb_secret_') || supabaseAnonKey.startsWith('sbp_')) {
+    return {
+      success: false,
+      message: 'Invalid Key in Hostinger: VITE_SUPABASE_ANON_KEY starts with "sb_secret_", which is a Supabase Management token. PostgREST requires the "anon public" JWT key starting with "eyJhbGciOi...". Please update it in Hostinger Environment Variables.',
+      details: { code: 'UNAUTHORIZED_INVALID_API_KEY' },
+      tableUsed: getLeadsTableName(),
+    };
+  }
+
   if (!isSupabaseConfigured) {
     return {
       success: false,
