@@ -162,24 +162,20 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           return timeB - timeA;
         });
 
+        // Set exclusively from Supabase data. Do not touch or append LocalStorage.
         setLiveDbLeads(mapped);
         setLastRefreshedAt(new Date());
-
-        TelecomStorage.mergeExternalLeads(mapped);
-        if (onUpdateCustomers) {
-          const merged = TelecomStorage.getCustomers();
-          onUpdateCustomers(merged);
-        }
       }
     } catch (err: any) {
       console.error('Exception fetching live leads from Airwireless:', err);
       setDbFetchError(err?.message || 'Failed to connect to Supabase database');
+      setLiveDbLeads([]);
     } finally {
       setIsRefreshingLeads(false);
     }
-  }, [onUpdateCustomers]);
+  }, []);
 
-  // Force live fetch immediately on component mount
+  // Force global fetch immediately on component mount (NO auto-refresh interval)
   useEffect(() => {
     fetchLiveLeads();
   }, [fetchLiveLeads]);
@@ -200,18 +196,12 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     return Array.from(monthSet).sort().reverse();
   }, [customers]);
 
-  // RBAC Permission-Filtered Records (Strictly excluding soft-deleted records from active views):
-  // - Master Admin sees ALL active records
-  // - Sales Reps see own active records + peers with explicit view permissions
+  // Stop using LocalStorage for Admin Data:
+  // Only display what is returned from the Supabase fetch. Do NOT fall back to LocalStorage or local state appends.
   const leads = useMemo(() => {
-    const source = liveDbLeads !== null
-      ? liveDbLeads
-      : customers.filter((c) => !c.isDeleted && c.status === 'lead');
-
-    return source.filter(
-      (c) => !c.isDeleted && (c.status === 'lead' || !c.status) && canStaffViewLead(currentStaff, c.salesRep)
-    );
-  }, [customers, liveDbLeads, currentStaff]);
+    if (!liveDbLeads) return [];
+    return liveDbLeads;
+  }, [liveDbLeads]);
 
   const activeLines = useMemo(() => {
     return customers.filter(
@@ -278,11 +268,31 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       .reduce((sum, c) => sum + (c.commission?.amount || 0), 0);
   }, [rbacAccessibleCustomers]);
 
-  // Filtered dataset for currently active tab (including Date Range Selector)
+  // Filtered dataset for currently active tab
   const filteredDataset = useMemo(() => {
+    // For leads: Direct global fetch from Supabase. No date-range or session isolation filters.
+    if (activeTab === 'leads') {
+      let result = leads;
+      if (filterRep !== 'all') {
+        result = result.filter((item) => item.salesRep === filterRep);
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        result = result.filter((item) => {
+          const matchName = item.fullName.toLowerCase().includes(q);
+          const matchEmail = item.email.toLowerCase().includes(q);
+          const matchPhone = item.phone.toLowerCase().includes(q) || (item.activatedPhone && item.activatedPhone.toLowerCase().includes(q));
+          const matchId = item.id.toLowerCase().includes(q);
+          const matchPlan = item.preferredPlanName.toLowerCase().includes(q);
+          const matchRep = item.salesRep.toLowerCase().includes(q);
+          return matchName || matchEmail || matchPhone || matchId || matchPlan || matchRep;
+        });
+      }
+      return result;
+    }
+
     let source: CustomerRecord[] = [];
-    if (activeTab === 'leads') source = leads;
-    else if (activeTab === 'active_lines') source = activeLines;
+    if (activeTab === 'active_lines') source = activeLines;
     else if (activeTab === 'non_active_lines') source = nonActiveLines;
     else source = rbacAccessibleCustomers;
 
@@ -292,12 +302,10 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         return false;
       }
 
-      // Date Range Filter for Leads, Active Lines, Non-Active Lines
-      if (activeTab === 'leads' || activeTab === 'active_lines' || activeTab === 'non_active_lines') {
+      // Date Range Filter for Active Lines, Non-Active Lines
+      if (activeTab === 'active_lines' || activeTab === 'non_active_lines') {
         const refDate =
-          activeTab === 'leads'
-            ? item.submittedAt || item.activationStartDate
-            : activeTab === 'active_lines'
+          activeTab === 'active_lines'
             ? item.activationStartDate || item.submittedAt
             : item.deactivationDate || item.activationStartDate || item.submittedAt;
 
@@ -672,8 +680,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
         </div>
 
-        {/* Global Standardized Date Range Selector for Leads, Active Lines, Non-Active Lines */}
-        {(activeTab === 'leads' || activeTab === 'active_lines' || activeTab === 'non_active_lines') && (
+        {/* Global Standardized Date Range Selector for Active Lines, Non-Active Lines */}
+        {(activeTab === 'active_lines' || activeTab === 'non_active_lines') && (
           <DateRangeFilter
             mode={dateFilterMode}
             onModeChange={setDateFilterMode}
@@ -685,17 +693,13 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             onCustomEndChange={setCustomEndMonth}
             availableMonths={availableMonths}
             totalRecordsCount={
-              activeTab === 'leads'
-                ? leads.length
-                : activeTab === 'active_lines'
+              activeTab === 'active_lines'
                 ? activeLines.length
                 : nonActiveLines.length
             }
             filteredCount={filteredDataset.length}
             label={
-              activeTab === 'leads'
-                ? 'Leads'
-                : activeTab === 'active_lines'
+              activeTab === 'active_lines'
                 ? 'Active Lines'
                 : 'Non-Active Lines'
             }

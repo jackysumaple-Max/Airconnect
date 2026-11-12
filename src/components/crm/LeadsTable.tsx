@@ -241,34 +241,42 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
         </div>
       )}
 
-      {/* ASSIGNED LEADS PIPELINE TABLE */}
+      {/* MASTER LEADS PIPELINE TABLE (ALL SUPABASE LEADS) */}
       <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-xs">
         <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50/70">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-extrabold text-slate-900">
-                {isAdmin ? 'Active Leads Pipeline' : `${currentStaff.name}'s Assigned Leads`}
+                {isAdmin ? 'Master Leads Pipeline (Live Database)' : `${currentStaff.name}'s Leads`}
               </h3>
-              <span className="rounded-full bg-slate-200 text-slate-800 text-[10px] font-extrabold px-2 py-0.5">
-                {assignedLeads.length} Leads
+              <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 border border-emerald-200">
+                {leads.length} Total Leads
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {isAdmin
-                ? 'Leads distributed to sales representatives. Monitor contact progress or reassign.'
-                : 'Customer leads assigned directly to you by the Admin. Follow up and convert to active lines.'}
+              Live master list directly from Supabase Airwireless table without local device isolation.
             </p>
           </div>
+
+          {onRefreshLeads && (
+            <button
+              type="button"
+              onClick={onRefreshLeads}
+              disabled={isRefreshing}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 px-3.5 py-1.5 text-xs font-bold text-white transition-all shadow-xs cursor-pointer"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isRefreshing ? 'Refreshing...' : 'Refresh Leads'}</span>
+            </button>
+          )}
         </div>
 
-        {assignedLeads.length === 0 ? (
+        {leads.length === 0 ? (
           <div className="p-12 text-center text-slate-400 text-xs">
             <Inbox className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-            <h4 className="font-bold text-slate-700 text-sm">No Assigned Leads Found</h4>
+            <h4 className="font-bold text-slate-700 text-sm">No Leads in Airwireless Table</h4>
             <p className="text-slate-400 mt-1 max-w-sm mx-auto">
-              {isAdmin
-                ? 'All new inbound leads are currently in the Master Unassigned Pool above.'
-                : 'No leads currently assigned to you. Leads assigned by the Admin will appear here.'}
+              No records returned from Supabase table "Airwireless". Click "Refresh Leads" above to query the database.
             </p>
           </div>
         ) : (
@@ -286,7 +294,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {assignedLeads.map((lead) => {
+                {leads.map((lead) => {
                   const followUp = lead.leadFollowUpStatus || 'new';
 
                   return (
@@ -340,10 +348,11 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                       <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                         {isAdmin ? (
                           <select
-                            value={lead.salesRep}
+                            value={lead.salesRep || 'Unassigned'}
                             onChange={(e) => onAssignLead(lead.id, e.target.value)}
                             className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-800 outline-none hover:border-emerald-500"
                           >
+                            <option value="Unassigned">● Unassigned</option>
                             {staffMembers.map((s) => (
                               <option key={s.id} value={s.name}>
                                 {s.name} ({s.commissionMultiplier}x)
