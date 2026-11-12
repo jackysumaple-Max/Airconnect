@@ -25,17 +25,24 @@ function getInitialSupabaseUrl(): string {
 function getInitialSupabaseKey(): string {
   if (typeof window !== 'undefined') {
     const local = localStorage.getItem('ctexcel_supabase_anon_key') || localStorage.getItem('VITE_SUPABASE_ANON_KEY');
-    if (local && local.trim()) return local.trim();
+    if (local && local.trim() && !local.startsWith('sb_secret_')) return local.trim();
     const win = window as any;
-    if (win.__SUPABASE_ANON_KEY__) return win.__SUPABASE_ANON_KEY__;
-    if (win.__ENV__?.VITE_SUPABASE_ANON_KEY) return win.__ENV__.VITE_SUPABASE_ANON_KEY;
+    if (win.__SUPABASE_ANON_KEY__ && !win.__SUPABASE_ANON_KEY__.startsWith('sb_secret_')) return win.__SUPABASE_ANON_KEY__;
+    if (win.__ENV__?.VITE_SUPABASE_ANON_KEY && !win.__ENV__.VITE_SUPABASE_ANON_KEY.startsWith('sb_secret_')) return win.__ENV__.VITE_SUPABASE_ANON_KEY;
   }
-  return (
+  const fromEnv = (
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
     (typeof process !== 'undefined' && process.env?.SUPABASE_ANON_KEY) ||
     (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) ||
     ''
   ).trim();
+
+  // If environment variable is valid (not sb_secret_), use it.
+  // Otherwise fall back to the live working publishable key for project xnnszqnghxoqplniiaiv
+  if (fromEnv && !fromEnv.startsWith('sb_secret_')) {
+    return fromEnv;
+  }
+  return 'sb_publishable_Gk-b-CJVnFyBw-DSRETUlw_ZhamAEfU';
 }
 
 export let supabaseUrl = getInitialSupabaseUrl();
@@ -969,85 +976,85 @@ export function subscribeToLeadsRealtime(
   if (!isSupabaseConfigured) return () => {};
 
   try {
+    const handlePayload = (payload: any) => {
+      console.log('⚡ Realtime Lead change received:', payload.eventType, payload.new);
+
+      if (payload.eventType === 'INSERT' && payload.new) {
+        const raw = payload.new;
+        const newLead: CustomerRecord = {
+          id: raw.id || `LEAD-${Date.now().toString().slice(-4)}`,
+          status: raw.status || 'lead',
+          firstName: raw.first_name || '',
+          lastName: raw.last_name || '',
+          fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim() || 'New Lead',
+          email: raw.email || '',
+          phone: raw.phone || '',
+          preferredPlanId: raw.preferred_plan_id || '',
+          preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
+          monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
+          salesRep: raw.sales_rep || 'Unassigned',
+          referralSource: raw.referral_source || 'Website Lead Capture',
+          submittedAt: raw.submitted_at || new Date().toISOString(),
+          callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
+          notes: raw.notes || '',
+          leadFollowUpStatus: raw.lead_follow_up_status || 'new',
+          isDeleted: Boolean(raw.is_deleted),
+          deletedAt: raw.deleted_at,
+          deletedBy: raw.deleted_by,
+          idVerification: {
+            status: raw.id_verification_status || 'unverified',
+          },
+          commission: {
+            amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
+            status: 'pending',
+            isClawbackFlagged: false,
+            multiplierUsed: 1.0,
+          },
+        };
+        onInsert(newLead);
+      } else if (payload.eventType === 'UPDATE' && payload.new && onUpdate) {
+        const raw = payload.new;
+        const updated: CustomerRecord = {
+          id: raw.id,
+          status: raw.status || 'lead',
+          firstName: raw.first_name || '',
+          lastName: raw.last_name || '',
+          fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim(),
+          email: raw.email || '',
+          phone: raw.phone || '',
+          preferredPlanId: raw.preferred_plan_id || '',
+          preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
+          monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
+          salesRep: raw.sales_rep || 'Unassigned',
+          referralSource: raw.referral_source || 'Website Lead Capture',
+          submittedAt: raw.submitted_at || new Date().toISOString(),
+          callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
+          notes: raw.notes || '',
+          leadFollowUpStatus: raw.lead_follow_up_status || 'new',
+          isDeleted: Boolean(raw.is_deleted),
+          deletedAt: raw.deleted_at,
+          deletedBy: raw.deleted_by,
+          idVerification: {
+            status: raw.id_verification_status || 'unverified',
+          },
+          commission: {
+            amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
+            status: 'pending',
+            isClawbackFlagged: false,
+            multiplierUsed: 1.0,
+          },
+        };
+        onUpdate(updated);
+      } else if (payload.eventType === 'DELETE' && payload.old && onDelete) {
+        onDelete(payload.old.id);
+      }
+    };
+
     const channel = supabase
       .channel('leads-realtime-feed')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'leads' },
-        (payload: any) => {
-          console.log('⚡ Realtime Lead change received:', payload.eventType, payload.new);
-
-          if (payload.eventType === 'INSERT' && payload.new) {
-            const raw = payload.new;
-            const newLead: CustomerRecord = {
-              id: raw.id || `LEAD-${Date.now().toString().slice(-4)}`,
-              status: raw.status || 'lead',
-              firstName: raw.first_name || '',
-              lastName: raw.last_name || '',
-              fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim() || 'New Lead',
-              email: raw.email || '',
-              phone: raw.phone || '',
-              preferredPlanId: raw.preferred_plan_id || '',
-              preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
-              monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
-              salesRep: raw.sales_rep || 'Unassigned',
-              referralSource: raw.referral_source || 'Website Lead Capture',
-              submittedAt: raw.submitted_at || new Date().toISOString(),
-              callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
-              notes: raw.notes || '',
-              leadFollowUpStatus: raw.lead_follow_up_status || 'new',
-              isDeleted: Boolean(raw.is_deleted),
-              deletedAt: raw.deleted_at,
-              deletedBy: raw.deleted_by,
-              idVerification: {
-                status: raw.id_verification_status || 'unverified',
-              },
-              commission: {
-                amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
-                status: 'pending',
-                isClawbackFlagged: false,
-                multiplierUsed: 1.0,
-              },
-            };
-            onInsert(newLead);
-          } else if (payload.eventType === 'UPDATE' && payload.new && onUpdate) {
-            const raw = payload.new;
-            const updated: CustomerRecord = {
-              id: raw.id,
-              status: raw.status || 'lead',
-              firstName: raw.first_name || '',
-              lastName: raw.last_name || '',
-              fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim(),
-              email: raw.email || '',
-              phone: raw.phone || '',
-              preferredPlanId: raw.preferred_plan_id || '',
-              preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
-              monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
-              salesRep: raw.sales_rep || 'Unassigned',
-              referralSource: raw.referral_source || 'Website Lead Capture',
-              submittedAt: raw.submitted_at || new Date().toISOString(),
-              callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
-              notes: raw.notes || '',
-              leadFollowUpStatus: raw.lead_follow_up_status || 'new',
-              isDeleted: Boolean(raw.is_deleted),
-              deletedAt: raw.deleted_at,
-              deletedBy: raw.deleted_by,
-              idVerification: {
-                status: raw.id_verification_status || 'unverified',
-              },
-              commission: {
-                amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
-                status: 'pending',
-                isClawbackFlagged: false,
-                multiplierUsed: 1.0,
-              },
-            };
-            onUpdate(updated);
-          } else if (payload.eventType === 'DELETE' && payload.old && onDelete) {
-            onDelete(payload.old.id);
-          }
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Airwireless' }, handlePayload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'airwireless' }, handlePayload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, handlePayload)
       .subscribe((status: string) => {
         console.log('📡 Supabase Leads realtime status:', status);
       });

@@ -13,6 +13,9 @@ import {
   UserPlus,
   Shield,
   Send,
+  RefreshCw,
+  AlertTriangle,
+  Database,
 } from 'lucide-react';
 
 interface LeadsTableProps {
@@ -23,6 +26,10 @@ interface LeadsTableProps {
   onUpdateStatus: (id: string, newStatus: LeadFollowUpStatus) => void;
   onQuickActivate: (customer: CustomerRecord) => void;
   onAssignLead: (leadId: string, repName: string) => void;
+  onRefreshLeads?: () => void;
+  isRefreshing?: boolean;
+  lastRefreshedAt?: Date | null;
+  dbFetchError?: string | null;
 }
 
 export const LeadsTable: React.FC<LeadsTableProps> = ({
@@ -33,6 +40,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   onUpdateStatus,
   onQuickActivate,
   onAssignLead,
+  onRefreshLeads,
+  isRefreshing = false,
+  lastRefreshedAt,
+  dbFetchError,
 }) => {
   const isAdmin =
     currentStaff.role === 'admin' ||
@@ -50,6 +61,67 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
 
   return (
     <div className="space-y-6">
+
+      {/* TOP REFRESH & DATABASE SYNC BAR */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+        <div className="flex items-center gap-3">
+          <div className="flex h-3.5 w-3.5 relative shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5 text-emerald-700" />
+                Live Supabase Feed (Airwireless)
+              </span>
+              <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 border border-emerald-200">
+                {leads.length} Leads Total
+              </span>
+              <span className="rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 border border-amber-200">
+                {unassignedLeads.length} Inbound Unassigned
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Live database query runs directly without device or user isolation. All phone and PC submissions sync here.
+              {lastRefreshedAt && (
+                <span className="ml-1 text-slate-400 font-mono">
+                  • Last refreshed: {lastRefreshedAt.toLocaleTimeString()}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {onRefreshLeads && (
+          <button
+            type="button"
+            onClick={onRefreshLeads}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 disabled:opacity-60 px-4 py-2 text-xs font-bold text-white transition-all shadow-xs shrink-0 cursor-pointer"
+            title="Fetch the full cross-device leads list directly from the Supabase Airwireless table"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing Leads...' : 'Refresh Leads'}</span>
+          </button>
+        )}
+      </div>
+
+      {/* Surface Database Fetch Error if present */}
+      {dbFetchError && (
+        <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 shadow-2xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-amber-950">Database Query Alert</p>
+              <p className="mt-0.5 text-amber-800">{dbFetchError}</p>
+              <p className="mt-1 text-[11px] text-amber-700">
+                Tip: Ensure your Supabase project table has a SELECT policy allowing authenticated or anon users to read from <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">Airwireless</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ADMIN LEAD DISTRIBUTION ENGINE: Master Unassigned Pool */}
       {isAdmin && (

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { CustomerRecord, Plan, CMSConfig, StaffRep, CustomerStatus, LeadFollowUpStatus } from '../../types/telecom';
 import {
   calculateDaysBetween,
@@ -21,6 +21,7 @@ import { NewCustomerModal } from './NewCustomerModal';
 import { ExcelExportModal } from './ExcelExportModal';
 import { DeletedItemsView } from './DeletedItemsView';
 import {
+  supabase,
   restoreCustomerInSupabase,
   hardDeleteCustomersInSupabase,
 } from '../../services/supabase';
@@ -104,6 +105,85 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [isExcelExportModalOpen, setIsExcelExportModalOpen] = useState(false);
 
+  // Live Supabase Leads State (Force Live Fetch across all devices)
+  const [liveDbLeads, setLiveDbLeads] = useState<CustomerRecord[] | null>(null);
+  const [isRefreshingLeads, setIsRefreshingLeads] = useState<boolean>(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const [dbFetchError, setDbFetchError] = useState<string | null>(null);
+
+  // Force Live Fetch: Ensure the component mounts and immediately runs await supabase.from('Airwireless').select('*')
+  // Strictly NO .eq('user_id', ...) or device-specific filters!
+  const fetchLiveLeads = useCallback(async () => {
+    setIsRefreshingLeads(true);
+    setDbFetchError(null);
+    try {
+      let res = await supabase.from('Airwireless').select('*');
+      if (res.error && (res.error.code === '42P01' || res.error.message?.includes('does not exist'))) {
+        res = await supabase.from('airwireless').select('*');
+      }
+      if (res.error) {
+        console.error('Supabase live fetch error on Airwireless:', res.error);
+        setDbFetchError(res.error.message || 'Error fetching leads from Supabase');
+        return;
+      }
+
+      if (res.data) {
+        const mapped: CustomerRecord[] = res.data.map((item: any) => ({
+          id: item.id ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
+          status: 'lead',
+          firstName: item.first_name || item.firstName || item.name?.split(' ')[0] || '',
+          lastName: item.last_name || item.lastName || item.name?.split(' ').slice(1).join(' ') || '',
+          fullName: item.full_name || item.fullName || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'Website Customer',
+          email: item.email || '',
+          phone: item.phone || '',
+          preferredPlanId: item.preferred_plan_id || item.preferredPlanId || 'ctexcel-27-50gb',
+          preferredPlanName: item.preferred_plan_name || item.preferredPlanName || item.plan || '$27 / 50GB 5G Plan',
+          monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 27),
+          salesRep: item.sales_rep || item.salesRep || 'Unassigned',
+          referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
+          submittedAt: item.submitted_at || item.created_at || new Date().toISOString(),
+          callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
+          notes: item.notes || '',
+          leadFollowUpStatus: (item.lead_follow_up_status as LeadFollowUpStatus) || (item.leadFollowUpStatus as LeadFollowUpStatus) || 'new',
+          idVerification: {
+            status: item.id_verification_status || 'unverified',
+          },
+          commission: {
+            amount: Number((Number(item.monthly_plan_price || 27) * 1.0).toFixed(2)),
+            status: 'pending',
+            isClawbackFlagged: false,
+            multiplierUsed: 1.0,
+          },
+        }));
+
+        mapped.sort((a, b) => {
+          const timeA = new Date(a.submittedAt || 0).getTime();
+          const timeB = new Date(b.submittedAt || 0).getTime();
+          return timeB - timeA;
+        });
+
+        setLiveDbLeads(mapped);
+        setLastRefreshedAt(new Date());
+
+        TelecomStorage.mergeExternalLeads(mapped);
+        if (onUpdateCustomers) {
+          const merged = TelecomStorage.getCustomers();
+          onUpdateCustomers(merged);
+        }
+      }
+    } catch (err: any) {
+      console.error('Exception fetching live leads from Airwireless:', err);
+      setDbFetchError(err?.message || 'Failed to connect to Supabase database');
+    } finally {
+      setIsRefreshingLeads(false);
+    }
+  }, [onUpdateCustomers]);
+
+  // Force live fetch immediately on component mount
+  useEffect(() => {
+    fetchLiveLeads();
+  }, [fetchLiveLeads]);
+
   // Available months dynamically extracted from customer records
   const availableMonths = useMemo(() => {
     const monthSet = new Set<string>();
@@ -124,10 +204,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   // - Master Admin sees ALL active records
   // - Sales Reps see own active records + peers with explicit view permissions
   const leads = useMemo(() => {
-    return customers.filter(
-      (c) => !c.isDeleted && c.status === 'lead' && canStaffViewLead(currentStaff, c.salesRep)
+    const source = liveDbLeads !== null
+      ? liveDbLeads
+      : customers.filter((c) => !c.isDeleted && c.status === 'lead');
+
+    return source.filter(
+      (c) => !c.isDeleted && (c.status === 'lead' || !c.status) && canStaffViewLead(currentStaff, c.salesRep)
     );
-  }, [customers, currentStaff]);
+  }, [customers, liveDbLeads, currentStaff]);
 
   const activeLines = useMemo(() => {
     return customers.filter(
@@ -551,6 +635,20 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               </button>
             )}
 
+            {/* Refresh Leads Button (Direct Airwireless Supabase fetch) */}
+            {activeTab === 'leads' && (
+              <button
+                type="button"
+                onClick={fetchLiveLeads}
+                disabled={isRefreshingLeads}
+                className="flex items-center gap-1.5 rounded-xl border border-emerald-600 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 disabled:opacity-60 px-3.5 py-2 text-xs font-bold text-white transition-colors shadow-2xs cursor-pointer"
+                title="Fetch latest cross-device leads directly from Airwireless table in Supabase"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingLeads ? 'animate-spin' : ''}`} />
+                <span>{isRefreshingLeads ? 'Refreshing...' : 'Refresh Leads'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsNewModalOpen(true)}
               className="flex items-center gap-1.5 rounded-xl bg-[#0F3E2E] hover:bg-[#14533D] px-3.5 py-2 text-xs font-bold text-white transition-colors shadow-2xs"
@@ -660,6 +758,10 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             onUpdateStatus={handleUpdateLeadStatus}
             onQuickActivate={handleQuickActivate}
             onAssignLead={handleAssignLead}
+            onRefreshLeads={fetchLiveLeads}
+            isRefreshing={isRefreshingLeads}
+            lastRefreshedAt={lastRefreshedAt}
+            dbFetchError={dbFetchError}
           />
         )}
 
