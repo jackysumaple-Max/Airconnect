@@ -1055,11 +1055,30 @@ export async function restoreCustomerInSupabase(id: string) {
 export async function hardDeleteCustomersInSupabase(ids: string[]) {
   if (!isSupabaseConfigured) return { success: true, error: null };
 
+  const cleanIds = Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((id) => (typeof id === 'string' || typeof id === 'number' ? String(id).trim() : ''))
+        .filter(Boolean)
+    )
+  );
+  if (cleanIds.length === 0) return { success: true, error: null };
+
   try {
-    const { error } = await supabase.from('Airwireless').delete().in('id', ids);
+    const { data, error } = await supabase
+      .from('Airwireless')
+      .delete()
+      .in('id', cleanIds)
+      .select('id');
     if (error) {
       console.warn('Airwireless hard delete warning:', error.message);
       return { success: false, error };
+    }
+    if (Array.isArray(data) && data.length === 0) {
+      return {
+        success: false,
+        error: new Error('Supabase returned 0 deleted rows. Check Airwireless DELETE RLS policy.'),
+      };
     }
   } catch (err) {
     return { success: false, error: err };

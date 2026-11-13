@@ -78,7 +78,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   const [bulkSelectedRep, setBulkSelectedRep] = useState<string>('');
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
 
-  const visibleLeadIds = safeLeads.map((l) => l.id).filter(Boolean);
+  const getLeadId = (lead: CustomerRecord): string =>
+    typeof lead?.id === 'string' ? lead.id.trim() : '';
+
+  const visibleLeadIds = safeLeads.map(getLeadId).filter(Boolean);
   const selectedVisibleCount = visibleLeadIds.filter((id) => safeSelectedIds.includes(id)).length;
   const allSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
   const someSelected = selectedVisibleCount > 0 && !allSelected;
@@ -339,7 +342,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {safeLeads.map((lead, idx) => {
                   const followUp = lead.leadFollowUpStatus || 'new';
-                  const isSelected = Boolean(lead.id && safeSelectedIds.includes(lead.id));
+                  const leadId = getLeadId(lead);
+                  const isSelected = Boolean(leadId && safeSelectedIds.includes(leadId));
                   const currentRep = lead.salesRep || 'Unassigned';
                   const hasCustomRepOption =
                     Boolean(currentRep) &&
@@ -348,7 +352,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
 
                   return (
                     <tr
-                      key={lead.id || `lead-row-${idx}`}
+                      key={leadId || `lead-row-${idx}`}
                       onClick={() => onOpenCustomer(lead)}
                       className={`transition-colors cursor-pointer group ${
                         isSelected
@@ -364,8 +368,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          disabled={!lead.id}
-                          onChange={() => lead.id && onToggleSelect(lead.id)}
+                          disabled={!leadId}
+                          onChange={() => leadId && onToggleSelect(leadId)}
                           aria-label={`Select ${lead.fullName || 'lead'}`}
                           className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer accent-emerald-700"
                         />

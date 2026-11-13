@@ -27,7 +27,7 @@ interface CustomerProfileModalProps {
   isMasterAdmin?: boolean;
   onClose: () => void;
   onSave: (id: string, updates: Partial<CustomerRecord>) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void> | void;
 }
 
 export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
@@ -79,8 +79,10 @@ export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
   const [commissionStatus, setCommissionStatus] = useState<CommissionStatus>(customer.commission?.status || 'pending');
   const [payoutDate, setPayoutDate] = useState(customer.commission?.payoutDate || '');
 
-  // Track save notifications
+  // Track save & delete confirmation state
   const [savedNotice, setSavedNotice] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Real-time calculation of days active and clawback condition
   const daysActive = activationStartDate
@@ -742,22 +744,51 @@ export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
           </div>
 
           {/* Modal Bottom Actions */}
-          <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+          <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
             {isMasterAdmin ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm(`Permanently delete ${customer.fullName} from Airwireless?`)) {
-                    onDelete(customer.id);
-                    onClose();
-                  }
-                }}
-                className="flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-800 p-2 rounded-lg hover:bg-rose-50 transition-colors font-medium"
-                title="Master Admin Delete: Permanently deletes record from Airwireless"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span>Delete Record</span>
-              </button>
+              confirmDelete ? (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5">
+                  <span className="text-xs font-bold text-rose-900">
+                    Delete from Airwireless?
+                  </span>
+                  <button
+                    type="button"
+                    disabled={isDeleting || !customer.id}
+                    onClick={async () => {
+                      setIsDeleting(true);
+                      try {
+                        await onDelete(customer.id);
+                        onClose();
+                      } finally {
+                        setIsDeleting(false);
+                        setConfirmDelete(false);
+                      }
+                    }}
+                    className="rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-60 px-2.5 py-1 text-[11px] font-extrabold text-white transition-colors cursor-pointer"
+                  >
+                    {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeleting}
+                    onClick={() => setConfirmDelete(false)}
+                    className="rounded-lg border border-slate-300 bg-white hover:bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!customer.id}
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-800 p-2 rounded-lg hover:bg-rose-50 transition-colors font-medium cursor-pointer disabled:opacity-50"
+                  title="Master Admin Delete: Permanently deletes record from Airwireless"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Delete Record</span>
+                </button>
+              )
             ) : (
               <div className="text-[11px] text-slate-400 italic">
                 {/* Deletion privileges revoked for Sales Reps */}

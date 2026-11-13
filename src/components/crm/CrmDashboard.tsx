@@ -116,10 +116,21 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [dbFetchError, setDbFetchError] = useState<string | null>(null);
 
-  // Bulk Row Selection & Action State
+  // Bulk Row Selection & Action State (strictly stores primary-key `id` strings)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkProcessing, setIsBulkProcessing] = useState<boolean>(false);
   const [bulkActionNotice, setBulkActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<
+    | { mode: 'single'; record: CustomerRecord; leadId: string }
+    | { mode: 'bulk'; ids: string[] }
+    | null
+  >(null);
+
+  const normalizeRecordId = useCallback((val: unknown): string => {
+    if (typeof val === 'string') return val.trim();
+    if (typeof val === 'number' && Number.isFinite(val)) return String(val);
+    return '';
+  }, []);
 
   const onUpdateCustomersRef = useRef(onUpdateCustomers);
   onUpdateCustomersRef.current = onUpdateCustomers;
@@ -172,7 +183,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       }
 
       const mapped: CustomerRecord[] = (Array.isArray(data) ? data : [])
-        .filter((item: any) => item && item.id !== undefined && item.id !== null)
+        .filter((item: any) => item && item.id !== undefined && item.id !== null && String(item.id).trim() !== '')
         .map(mapAirwirelessRowToCustomerRecord);
 
       mapped.sort((a, b) => {
@@ -181,7 +192,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         return timeB - timeA;
       });
 
+      const validIdSet = new Set(mapped.map((m) => m.id).filter(Boolean));
       setLiveDbLeads([...mapped]);
+      setSelectedIds((prev) => prev.filter((id) => validIdSet.has(id)));
       setLastRefreshedAt(new Date());
       if (onUpdateCustomersRef.current) {
         onUpdateCustomersRef.current([...mapped]);
@@ -385,106 +398,143 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     searchQuery,
   ]);
 
-  // Row Selection Helpers
-  const handleToggleSelectLead = useCallback((id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
-  }, []);
-
-  const handleToggleSelectAllLeads = useCallback((visibleLeadIds: string[]) => {
-    setSelectedIds((prev) => {
-      const allSelected =
-        visibleLeadIds.length > 0 && visibleLeadIds.every((id) => prev.includes(id));
-      return allSelected ? [] : visibleLeadIds;
-    });
-  }, []);
-
-  // Bulk Delete Selected Leads
-  const handleBulkDeleteLeads = async () => {
-    const idsToDelete = selectedIds.filter(Boolean);
-    if (idsToDelete.length === 0) return;
-
-    const count = idsToDelete.length;
-    const confirmed = window.confirm(
-      `Are you sure you want to permanently delete ${count} record${count === 1 ? '' : 's'} from Airwireless?`
-    );
-    if (!confirmed) return;
-
-    setIsBulkProcessing(true);
-    setBulkActionNotice(null);
-    setDbFetchError(null);
-
-    try {
-      const { error } = await supabase
-        .from('Airwireless')
-        .delete()
-        .in('id', idsToDelete);
-
-      if (error) {
-        console.error('Supabase bulk delete error on Airwireless:', error);
-        const msg = error.message || 'Failed to delete selected leads from Supabase.';
-        setDbFetchError(msg);
-        setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
-        return;
-      }
-
-      await refreshData();
-      setSelectedIds([]);
-      setBulkActionNotice({
-        type: 'success',
-        message: `Successfully deleted ${count} record${count === 1 ? '' : 's'} from Airwireless.`,
+  // Row Selection Helpers (strictly store string `id` values, never phone numbers or lead objects)
+  const handleToggleSelectLead = useCallback(
+    (rawId: string) => {
+      const cleanId = normalizeRecordId(rawId);
+      if (!cleanId) return;
+      setSelectedIds((prev) => {
+        const cleanPrev = Array.from(new Set(prev.map(normalizeRecordId).filter(Boolean)));
+        return cleanPrev.includes(cleanId)
+          ? cleanPrev.filter((item) => item !== cleanId)
+          : [...cleanPrev, cleanId];
       });
-    } catch (err: any) {
-      console.error('Exception during bulk delete:', err);
-      const msg = err?.message || 'Unexpected error deleting leads.';
-      setDbFetchError(msg);
-      setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
-    } finally {
-      setIsBulkProcessing(false);
-    }
+    },
+    [normalizeRecordId]
+  );
+
+  const handleToggleSelectAllLeads = useCallback(
+    (visibleLeadIds: string[]) => {
+      const normalizedVisible = Array.from(
+        new Set((Array.isArray(visibleLeadIds) ? visibleLeadIds : []).map(normalizeRecordId).filter(Boolean))
+      );
+      setSelectedIds((prev) => {
+        const cleanPrev = Array.from(new Set(prev.map(normalizeRecordId).filter(Boolean)));
+        const allSelected =
+          normalizedVisible.length > 0 && normalizedVisible.every((id) => cleanPrev.includes(id));
+        return allSelected ? [] : normalizedVisible;
+      });
+    },
+    [normalizeRecordId]
+  );
+
+  // Open in-app confirmation modal for Bulk Delete Selected Leads
+  const handleBulkDeleteLeads = () => {
+    const idsToDelete = Array.from(new Set(selectedIds.map(normalizeRecordId).filter(Boolean)));
+    if (idsToDelete.length === 0) return;
+    setPendingDelete({ mode: 'bulk', ids: idsToDelete });
   };
 
-  // Single-Row Permanent Delete (.delete().eq('id', leadId))
-  const handleDeleteLead = async (record: CustomerRecord) => {
-    const leadId = record?.id;
+  // Open in-app confirmation modal for Single-Row Permanent Delete
+  const handleDeleteLead = (record: CustomerRecord) => {
+    const leadId = normalizeRecordId(record?.id);
     if (!leadId) {
       setBulkActionNotice({ type: 'error', message: 'Cannot delete record: missing primary key id.' });
       return;
     }
+    setPendingDelete({ mode: 'single', record, leadId });
+  };
 
-    const confirmed = window.confirm(
-      `Are you sure you want to permanently delete ${record.fullName} from Airwireless?`
-    );
-    if (!confirmed) return;
+  // Execute confirmed Supabase Delete targeting exact `id` column + immediate refreshData()
+  const executePendingDelete = async () => {
+    if (!pendingDelete) return;
+    const action = pendingDelete;
+    setPendingDelete(null);
 
     setIsBulkProcessing(true);
     setBulkActionNotice(null);
     setDbFetchError(null);
 
     try {
-      const { error } = await supabase
-        .from('Airwireless')
-        .delete()
-        .eq('id', leadId);
+      if (action.mode === 'bulk') {
+        const idsToDelete = Array.from(new Set(action.ids.map(normalizeRecordId).filter(Boolean)));
+        if (idsToDelete.length === 0) return;
 
-      if (error) {
-        console.error('Supabase single delete error on Airwireless:', error);
-        const msg = error.message || 'Failed to delete record from Supabase.';
-        setDbFetchError(msg);
-        setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
-        return;
+        const { data, error } = await supabase
+          .from('Airwireless')
+          .delete()
+          .in('id', idsToDelete)
+          .select('id');
+
+        if (error) {
+          console.error('Supabase bulk delete error on Airwireless:', error);
+          const msg = error.message || 'Failed to delete selected leads from Supabase.';
+          setDbFetchError(msg);
+          setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+          return;
+        }
+
+        if (Array.isArray(data) && data.length === 0) {
+          const msg =
+            'Supabase returned 0 deleted rows. Check that your DELETE RLS policy on Airwireless allows authenticated users and that the id values match.';
+          setDbFetchError(msg);
+          setBulkActionNotice({ type: 'error', message: msg });
+          await refreshData();
+          return;
+        }
+
+        const deletedCount = Array.isArray(data) ? data.length : idsToDelete.length;
+        TelecomStorage.hardDeleteCustomers(idsToDelete);
+        setSelectedIds([]);
+        if (selectedCustomer && idsToDelete.includes(normalizeRecordId(selectedCustomer.id))) {
+          setSelectedCustomer(null);
+        }
+        await refreshData();
+        setBulkActionNotice({
+          type: 'success',
+          message: `Successfully deleted ${deletedCount} record${deletedCount === 1 ? '' : 's'} from Airwireless.`,
+        });
+      } else {
+        const leadId = normalizeRecordId(action.leadId);
+        if (!leadId) return;
+
+        const { data, error } = await supabase
+          .from('Airwireless')
+          .delete()
+          .eq('id', leadId)
+          .select('id');
+
+        if (error) {
+          console.error('Supabase single delete error on Airwireless:', error);
+          const msg = error.message || 'Failed to delete record from Supabase.';
+          setDbFetchError(msg);
+          setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+          return;
+        }
+
+        if (Array.isArray(data) && data.length === 0) {
+          const msg =
+            `Supabase returned 0 deleted rows for id "${leadId}". Verify the DELETE policy on Airwireless allows authenticated users.`;
+          setDbFetchError(msg);
+          setBulkActionNotice({ type: 'error', message: msg });
+          await refreshData();
+          return;
+        }
+
+        TelecomStorage.hardDeleteCustomers([leadId]);
+        setSelectedIds((prev) => prev.filter((id) => id !== leadId));
+        if (selectedCustomer && normalizeRecordId(selectedCustomer.id) === leadId) {
+          setSelectedCustomer(null);
+        }
+        await refreshData();
+        setBulkActionNotice({
+          type: 'success',
+          message: `Deleted ${action.record.fullName || 'record'} from Airwireless.`,
+        });
       }
-
-      await refreshData();
-      setSelectedIds([]);
-      setBulkActionNotice({
-        type: 'success',
-        message: `Deleted ${record.fullName} from Airwireless.`,
-      });
     } catch (err: any) {
-      console.error('Exception during single delete:', err);
-      const msg = err?.message || 'Unexpected error deleting record.';
+      console.error('Exception during delete:', err);
+      const msg = err?.message || 'Unexpected error deleting record(s).';
       setDbFetchError(msg);
       setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
     } finally {
@@ -494,7 +544,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
   // Bulk Assign Selected Leads (.update({ sales_rep }).in('id', ids))
   const handleBulkAssignLeads = async (selectedRep: string) => {
-    const idsToAssign = selectedIds.filter(Boolean);
+    const idsToAssign = Array.from(new Set(selectedIds.map(normalizeRecordId).filter(Boolean)));
     if (idsToAssign.length === 0 || !selectedRep) return;
 
     const count = idsToAssign.length;
@@ -811,27 +861,56 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   };
 
   // Wrapper for deleting customer/lead from profile modal with automatic Supabase sync & refresh
-  const handleModalDeleteCustomer = async (id: string) => {
-    if (!id) return;
+  const handleModalDeleteCustomer = async (rawId: string) => {
+    const leadId = normalizeRecordId(rawId);
+    if (!leadId) {
+      setBulkActionNotice({ type: 'error', message: 'Cannot delete record: missing primary key id.' });
+      return;
+    }
+    setIsBulkProcessing(true);
     setBulkActionNotice(null);
     setDbFetchError(null);
 
-    const { error } = await supabase
-      .from('Airwireless')
-      .delete()
-      .eq('id', id);
+    try {
+      const { data, error } = await supabase
+        .from('Airwireless')
+        .delete()
+        .eq('id', leadId)
+        .select('id');
 
-    if (error) {
-      console.error('Supabase modal delete error on Airwireless:', error);
-      const msg = error.message || 'Failed to delete record from Supabase.';
+      if (error) {
+        console.error('Supabase modal delete error on Airwireless:', error);
+        const msg = error.message || 'Failed to delete record from Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+        return;
+      }
+
+      if (Array.isArray(data) && data.length === 0) {
+        const msg =
+          `Supabase returned 0 deleted rows for id "${leadId}". Verify the DELETE policy on Airwireless allows authenticated users.`;
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: msg });
+        await refreshData();
+        return;
+      }
+
+      TelecomStorage.hardDeleteCustomers([leadId]);
+      setSelectedIds((prev) => prev.filter((id) => id !== leadId));
+      setSelectedCustomer(null);
+      await refreshData();
+      setBulkActionNotice({
+        type: 'success',
+        message: 'Record permanently deleted from Airwireless.',
+      });
+    } catch (err: any) {
+      console.error('Exception during modal delete:', err);
+      const msg = err?.message || 'Unexpected error deleting record.';
       setDbFetchError(msg);
       setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
-      return;
+    } finally {
+      setIsBulkProcessing(false);
     }
-
-    onDeleteCustomer(id);
-    await refreshData();
-    setSelectedIds([]);
   };
 
   // Wrapper for adding a manual lead/line directly to Airwireless with automatic refresh
@@ -1416,6 +1495,55 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         staffMembers={staffMembers}
         isMasterAdmin={isMasterAdmin}
       />
+
+      {/* In-App Delete Confirmation Modal (Safe inside iframes, avoids browser confirm blocks) */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-rose-100 p-2.5 text-rose-700 shrink-0">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-extrabold text-slate-900">
+                  {pendingDelete.mode === 'bulk'
+                    ? `Delete ${pendingDelete.ids.length} Selected Record${pendingDelete.ids.length === 1 ? '' : 's'}?`
+                    : `Delete ${pendingDelete.record.fullName || 'Record'}?`}
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {pendingDelete.mode === 'bulk'
+                    ? `This will permanently remove ${pendingDelete.ids.length} selected lead${pendingDelete.ids.length === 1 ? '' : 's'} from the Supabase Airwireless table.`
+                    : `This will permanently remove ${pendingDelete.record.fullName || 'this record'} from the Supabase Airwireless table.`}
+                </p>
+                <p className="text-[11px] font-mono text-slate-400 break-all">
+                  {pendingDelete.mode === 'bulk'
+                    ? `Target IDs (${pendingDelete.ids.length}): ${pendingDelete.ids.slice(0, 3).join(', ')}${pendingDelete.ids.length > 3 ? '...' : ''}`
+                    : `Target ID: ${pendingDelete.leadId}`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={isBulkProcessing}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executePendingDelete}
+                disabled={isBulkProcessing}
+                className="rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 px-4 py-2 text-xs font-extrabold text-white transition-colors cursor-pointer"
+              >
+                {isBulkProcessing ? 'Deleting...' : 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
