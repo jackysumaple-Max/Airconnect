@@ -123,10 +123,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setIsRefreshingLeads(true);
     setDbFetchError(null);
     try {
-      let res = await supabase.from('Airwireless').select('*');
-      if (res.error && (res.error.code === '42P01' || res.error.code === 'PGRST205' || res.error.message?.includes('does not exist'))) {
-        res = await supabase.from('airwireless').select('*');
-      }
+      const res = await supabase.from('Airwireless').select('*');
       if (res.error) {
         console.error('Supabase live fetch error on Airwireless:', res.error);
         setDbFetchError(res.error.message || 'Error fetching leads from Supabase');
@@ -386,7 +383,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     });
   }, []);
 
-  // Helper to update Airwireless table using assigned_specialist (with sales_rep schema fallback)
+  // Helper to update Airwireless table using assigned_specialist (with sales_rep schema fallback on Airwireless)
   const updateAirwirelessAssign = async (ids: string[], repName: string) => {
     let res = await supabase
       .from('Airwireless')
@@ -403,29 +400,6 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         .from('Airwireless')
         .update({ sales_rep: repName })
         .in('id', ids);
-    }
-
-    if (
-      res.error &&
-      (res.error.code === '42P01' ||
-        res.error.code === 'PGRST205' ||
-        res.error.message?.includes('does not exist'))
-    ) {
-      res = await supabase
-        .from('airwireless')
-        .update({ assigned_specialist: repName })
-        .in('id', ids);
-      if (
-        res.error &&
-        (res.error.code === '42703' ||
-          res.error.code === 'PGRST204' ||
-          res.error.message?.includes('assigned_specialist'))
-      ) {
-        res = await supabase
-          .from('airwireless')
-          .update({ sales_rep: repName })
-          .in('id', ids);
-      }
     }
 
     return res;
@@ -446,15 +420,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
 
     try {
-      let res = await supabase.from('Airwireless').delete().in('id', selectedIds);
-      if (
-        res.error &&
-        (res.error.code === '42P01' ||
-          res.error.code === 'PGRST205' ||
-          res.error.message?.includes('does not exist'))
-      ) {
-        res = await supabase.from('airwireless').delete().in('id', selectedIds);
-      }
+      const res = await supabase.from('Airwireless').delete().in('id', selectedIds);
 
       if (res.error) {
         console.error('Supabase bulk delete error on Airwireless:', res.error);
@@ -544,22 +510,10 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setBulkActionNotice(null);
     onSaveCustomer(id, { leadFollowUpStatus: newStatus });
 
-    let res = await supabase
+    const res = await supabase
       .from('Airwireless')
       .update({ lead_follow_up_status: newStatus })
       .eq('id', id);
-
-    if (
-      res.error &&
-      (res.error.code === '42P01' ||
-        res.error.code === 'PGRST205' ||
-        res.error.message?.includes('does not exist'))
-    ) {
-      res = await supabase
-        .from('airwireless')
-        .update({ lead_follow_up_status: newStatus })
-        .eq('id', id);
-    }
 
     if (res.error) {
       console.error('Supabase lead status update error:', res.error);

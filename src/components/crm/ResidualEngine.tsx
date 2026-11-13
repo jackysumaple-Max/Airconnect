@@ -17,7 +17,6 @@ import {
   Save,
   Loader2,
   AlertCircle,
-  Copy,
   RefreshCw,
 } from 'lucide-react';
 
@@ -27,23 +26,6 @@ interface ResidualEngineProps {
   currentStaffName?: string;
   onRefreshData: () => void;
 }
-
-const MONTHLY_COHORTS_SQL = `CREATE TABLE IF NOT EXISTS public.monthly_cohorts (
-  cohort_month TEXT PRIMARY KEY,
-  cohort_name TEXT,
-  monthly_activations INT NOT NULL DEFAULT 0,
-  active_subscribers INT NOT NULL DEFAULT 0,
-  total_monthly_billing NUMERIC NOT NULL DEFAULT 0,
-  locked_residual_rate NUMERIC NOT NULL DEFAULT 0.07,
-  tier_label TEXT DEFAULT 'Tier 1 (7%)',
-  is_overridden BOOLEAN DEFAULT true,
-  updated_by TEXT,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-GRANT ALL ON TABLE public.monthly_cohorts TO anon, authenticated, service_role;
-ALTER TABLE public.monthly_cohorts ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public read monthly_cohorts" ON public.monthly_cohorts FOR SELECT TO anon, authenticated, public USING (true);
-CREATE POLICY "Allow admin write monthly_cohorts" ON public.monthly_cohorts FOR ALL TO anon, authenticated, public USING (true) WITH CHECK (true);`;
 
 function formatCohortMonthName(yyyyMm: string): string {
   const [yearStr, monthStr] = yyyyMm.split('-');
@@ -78,8 +60,6 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
   // Global Supabase cohort overrides state
   const [cohortOverrides, setCohortOverrides] = useState<Record<string, MonthlyCohortOverrideRecord>>({});
   const [isLoadingCohorts, setIsLoadingCohorts] = useState<boolean>(true);
-  const [missingTableWarning, setMissingTableWarning] = useState<boolean>(false);
-  const [copiedSql, setCopiedSql] = useState<boolean>(false);
 
   // Standardized Date Range Selector for Monthly Residuals Dashboard
   const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>('all');
@@ -102,11 +82,6 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
     setIsLoadingCohorts(true);
     try {
       const res = await fetchMonthlyCohortsFromSupabase();
-      if (res.missingTable) {
-        setMissingTableWarning(true);
-      } else {
-        setMissingTableWarning(false);
-      }
       const map: Record<string, MonthlyCohortOverrideRecord> = {};
       res.data.forEach((row) => {
         if (row.cohort_month) {
@@ -277,14 +252,7 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
       });
 
       if (res.error) {
-        if (res.missingTable) {
-          setMissingTableWarning(true);
-          setEditError(
-            'The Supabase table "monthly_cohorts" does not exist yet. Run the SQL script below in your Supabase SQL Editor first, then click Save.'
-          );
-        } else {
-          setEditError(res.error.message || 'Failed to save cohort overrides to Supabase.');
-        }
+        setEditError(res.error.message || 'Failed to save cohort overrides to Supabase.');
         return;
       }
 
@@ -295,7 +263,6 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
         }));
       }
 
-      setMissingTableWarning(false);
       setEditingCohort(null);
       setFeedbackMsg(
         `Cohort ${editingCohort.cohortName} (${editingCohort.cohortMonth}) updated in Supabase: ${activations} activations, ${activeSubscribers} active subscribers, $${totalBilling.toFixed(2)}/mo billing.`
@@ -307,12 +274,6 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
     } finally {
       setIsSavingEdit(false);
     }
-  };
-
-  const handleCopySql = () => {
-    navigator.clipboard.writeText(MONTHLY_COHORTS_SQL);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 2500);
   };
 
   return (
@@ -378,33 +339,6 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
         <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs font-bold text-emerald-900 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
           <span>{feedbackMsg}</span>
-        </div>
-      )}
-
-      {missingTableWarning && (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 space-y-2 shadow-2xs">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold">Supabase Table Setup Required: public.monthly_cohorts</p>
-                <p className="text-amber-800 mt-0.5">
-                  To save and persist manual cohort edits globally across devices, run this SQL once in your Supabase SQL Editor:
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleCopySql}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:bg-amber-100 shrink-0 cursor-pointer"
-            >
-              <Copy className="h-3 w-3" />
-              <span>{copiedSql ? 'Copied SQL!' : 'Copy SQL'}</span>
-            </button>
-          </div>
-          <pre className="rounded-lg bg-amber-100/70 border border-amber-200 p-2.5 text-[10px] font-mono overflow-x-auto text-amber-950">
-            {MONTHLY_COHORTS_SQL}
-          </pre>
         </div>
       )}
 
@@ -729,21 +663,11 @@ export const ResidualEngine: React.FC<ResidualEngineProps> = ({
 
             <form onSubmit={handleSaveCohortOverride} className="p-5 space-y-4">
               {editError && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 space-y-2">
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
                   <div className="flex items-start gap-2 font-semibold">
                     <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
                     <span>{editError}</span>
                   </div>
-                  {missingTableWarning && (
-                    <button
-                      type="button"
-                      onClick={handleCopySql}
-                      className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-2 py-1 text-[11px] font-bold text-rose-800 hover:bg-rose-100 cursor-pointer"
-                    >
-                      <Copy className="h-3 w-3" />
-                      <span>{copiedSql ? 'Copied SQL!' : 'Copy Setup SQL'}</span>
-                    </button>
-                  )}
                 </div>
               )}
 

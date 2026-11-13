@@ -337,20 +337,6 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
 
     console.error('[Supabase Lead Insert] Table "Airwireless" returned error:', error.message, error.details);
 
-    // If PostgreSQL schema uses lowercase 'airwireless' or relation error
-    if (error.code === '42P01' || error.message.includes('does not exist') || error.message.includes('relation')) {
-      console.warn('[Supabase Lead Insert] Table "Airwireless" not found. Attempting lowercase "airwireless"...');
-      const { error: lowerErr } = await supabase.from('airwireless').insert([payload]);
-      if (!lowerErr) {
-        console.log('[Supabase Lead Insert] SUCCESS! Row inserted into table "airwireless".');
-        return {
-          data: true,
-          error: null,
-          tableUsed: 'airwireless',
-        };
-      }
-    }
-
     // Format detailed error for UI surfacing
     const errMsg = error.message || 'Database rejected the submission.';
     const errDetails = error.details || null;
@@ -399,7 +385,7 @@ export async function fetchLeadsFromSupabase(): Promise<{ data: CustomerRecord[]
     return { data: null, error: null };
   }
 
-  const tablesToTry = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  const tablesToTry = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
 
   for (const tbl of tablesToTry) {
     try {
@@ -942,7 +928,7 @@ export async function softDeleteCustomerInSupabase(id: string, deletedBy: string
     deleted_by: deletedBy,
   };
 
-  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
   for (const tbl of tables) {
     try {
       await supabase.from(tbl).update(payload).eq('id', id);
@@ -966,7 +952,7 @@ export async function restoreCustomerInSupabase(id: string) {
     deleted_by: null,
   };
 
-  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
   for (const tbl of tables) {
     try {
       await supabase.from(tbl).update(payload).eq('id', id);
@@ -984,7 +970,7 @@ export async function restoreCustomerInSupabase(id: string) {
 export async function hardDeleteCustomersInSupabase(ids: string[]) {
   if (!isSupabaseConfigured) return { success: true, error: null };
 
-  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'airwireless', 'leads', 'customers']));
+  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
   for (const tbl of tables) {
     try {
       await supabase.from(tbl).delete().in('id', ids);
@@ -1085,7 +1071,6 @@ export function subscribeToLeadsRealtime(
     const channel = supabase
       .channel('leads-realtime-feed')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Airwireless' }, handlePayload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'airwireless' }, handlePayload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, handlePayload)
       .subscribe((status: string) => {
         console.log('📡 Supabase Leads realtime status:', status);
