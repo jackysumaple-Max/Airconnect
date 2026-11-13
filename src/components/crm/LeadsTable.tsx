@@ -8,6 +8,7 @@ import {
   Zap,
   Inbox,
   UserPlus,
+  UserX,
   RefreshCw,
   AlertTriangle,
   Database,
@@ -23,6 +24,8 @@ interface LeadsTableProps {
   onOpenCustomer: (customer: CustomerRecord) => void;
   onUpdateStatus: (id: string, newStatus: LeadFollowUpStatus) => void;
   onQuickActivate: (customer: CustomerRecord) => void;
+  onDeactivateLead?: (customer: CustomerRecord) => void;
+  onDeleteLead?: (customer: CustomerRecord) => void;
   onAssignLead: (leadId: string, repName: string) => void;
   onRefreshLeads?: () => void;
   isRefreshing?: boolean;
@@ -46,6 +49,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   onOpenCustomer,
   onUpdateStatus,
   onQuickActivate,
+  onDeactivateLead,
+  onDeleteLead,
   onAssignLead,
   onRefreshLeads,
   isRefreshing = false,
@@ -395,8 +400,9 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                         {isAdmin ? (
                           <select
                             value={lead.salesRep || 'Unassigned'}
+                            disabled={isBulkProcessing || !lead.id}
                             onChange={(e) => onAssignLead(lead.id, e.target.value)}
-                            className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-800 outline-none hover:border-emerald-500"
+                            className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-800 outline-none hover:border-emerald-500 disabled:opacity-50 cursor-pointer"
                           >
                             <option value="Unassigned">● Unassigned</option>
                             {staffMembers.map((s) => (
@@ -417,8 +423,9 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                       <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                         <select
                           value={followUp}
+                          disabled={isBulkProcessing || !lead.id}
                           onChange={(e) => onUpdateStatus(lead.id, e.target.value as LeadFollowUpStatus)}
-                          className={`text-[11px] font-bold rounded-lg px-2 py-1 border transition-colors outline-none cursor-pointer ${
+                          className={`text-[11px] font-bold rounded-lg px-2 py-1 border transition-colors outline-none cursor-pointer disabled:opacity-50 ${
                             followUp === 'new'
                               ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
                               : followUp === 'contacted'
@@ -443,13 +450,39 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
+                            disabled={isBulkProcessing || !lead.id}
                             onClick={() => onQuickActivate(lead)}
-                            className="flex items-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-[11px] font-bold text-white transition-colors shadow-2xs"
-                            title="Activate customer line immediately"
+                            className="flex items-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-bold text-white transition-colors shadow-2xs cursor-pointer whitespace-nowrap"
+                            title="Activate customer line immediately (status: Active)"
                           >
                             <Zap className="h-3 w-3" />
-                            <span>Activate Line</span>
+                            <span>Activate</span>
                           </button>
+
+                          {onDeactivateLead && (
+                            <button
+                              type="button"
+                              disabled={isBulkProcessing || !lead.id}
+                              onClick={() => onDeactivateLead(lead)}
+                              className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 px-2.5 py-1 text-[11px] font-bold text-slate-700 transition-colors cursor-pointer whitespace-nowrap"
+                              title="Move lead to Non-Active Lines (status: Non-Active)"
+                            >
+                              <UserX className="h-3 w-3 text-slate-500" />
+                              <span>Non-Active</span>
+                            </button>
+                          )}
+
+                          {isAdmin && onDeleteLead && (
+                            <button
+                              type="button"
+                              disabled={isBulkProcessing || !lead.id}
+                              onClick={() => onDeleteLead(lead)}
+                              className="flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-600 hover:text-white disabled:opacity-50 px-2 py-1 text-[11px] font-bold text-rose-700 transition-colors cursor-pointer"
+                              title="Delete lead from Airwireless"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
 
                           <button
                             type="button"

@@ -747,16 +747,16 @@ export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm(`Move ${customer.fullName} to the Master Admin Recycle Bin? (You can restore it later from Deleted Items).`)) {
+                  if (window.confirm(`Permanently delete ${customer.fullName} from Airwireless?`)) {
                     onDelete(customer.id);
                     onClose();
                   }
                 }}
                 className="flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-800 p-2 rounded-lg hover:bg-rose-50 transition-colors font-medium"
-                title="Master Admin Soft-Delete: Moves to Recycle Bin"
+                title="Master Admin Delete: Permanently deletes record from Airwireless"
               >
                 <Trash2 className="h-4 w-4" />
-                <span>Move to Recycle Bin</span>
+                <span>Delete Record</span>
               </button>
             ) : (
               <div className="text-[11px] text-slate-400 italic">

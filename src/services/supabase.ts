@@ -377,82 +377,122 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
 }
 
 /**
- * Fetch remote leads from Supabase database to populate the Leads dashboard
- * Checks 'Airwireless' first, with fallback to 'leads' and 'customers'.
+ * Normalizes database status values ('Active', 'active_line', 'Non-Active', 'non_active_line', 'lead')
+ * into canonical CRM CustomerStatus literals.
+ */
+export function normalizeAirwirelessStatus(rawStatus: unknown): CustomerRecord['status'] {
+  const normalized = String(rawStatus ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+
+  if (normalized === 'active' || normalized === 'active_line') {
+    return 'active_line';
+  }
+  if (
+    normalized === 'non_active' ||
+    normalized === 'non_active_line' ||
+    normalized === 'inactive' ||
+    normalized === 'canceled' ||
+    normalized === 'cancelled'
+  ) {
+    return 'non_active_line';
+  }
+  return 'lead';
+}
+
+/**
+ * Converts canonical CRM status into exact Airwireless Supabase status column strings.
+ */
+export function toAirwirelessDbStatus(status: CustomerRecord['status'] | string): string {
+  const normalized = normalizeAirwirelessStatus(status);
+  if (normalized === 'active_line') return 'Active';
+  if (normalized === 'non_active_line') return 'Non-Active';
+  return 'lead';
+}
+
+/**
+ * Maps a raw row from the Supabase 'Airwireless' table into a CustomerRecord,
+ * preserving the primary key UUID `id`.
+ */
+export function mapAirwirelessRowToCustomerRecord(item: any): CustomerRecord {
+  const canonicalStatus = normalizeAirwirelessStatus(item?.status);
+  const submittedAt = item?.submitted_at || item?.created_at || new Date().toISOString();
+  const monthlyPrice = Number(item?.monthly_plan_price || item?.monthlyPlanPrice || 27);
+
+  return {
+    id: item?.id !== undefined && item?.id !== null ? String(item.id) : '',
+    status: canonicalStatus,
+    firstName: item?.first_name || item?.firstName || item?.name?.split(' ')[0] || '',
+    lastName: item?.last_name || item?.lastName || item?.name?.split(' ').slice(1).join(' ') || '',
+    fullName:
+      item?.full_name ||
+      item?.fullName ||
+      item?.name ||
+      `${item?.first_name || ''} ${item?.last_name || ''}`.trim() ||
+      'Website Customer',
+    email: item?.email || '',
+    phone: item?.phone || '',
+    preferredPlanId: item?.preferred_plan_id || item?.preferredPlanId || 'ctexcel-27-50gb',
+    preferredPlanName: item?.preferred_plan_name || item?.preferredPlanName || item?.plan || '$27 / 50GB 5G Plan',
+    monthlyPlanPrice: monthlyPrice,
+    salesRep: item?.sales_rep || item?.assigned_specialist || item?.salesRep || 'Unassigned',
+    referralSource: item?.referral_source || item?.referralSource || 'Website Lead Capture',
+    submittedAt,
+    activationStartDate:
+      item?.activation_start_date ||
+      item?.activationStartDate ||
+      (canonicalStatus === 'active_line' ? submittedAt : undefined),
+    deactivationDate:
+      item?.deactivation_date ||
+      item?.deactivationDate ||
+      (canonicalStatus === 'non_active_line' ? (item?.updated_at || submittedAt) : undefined),
+    callbackTimePreference: item?.callback_time_preference || item?.callbackTimePreference || 'As soon as possible',
+    notes: item?.notes || '',
+    leadFollowUpStatus: item?.lead_follow_up_status || item?.leadFollowUpStatus || 'new',
+    isDeleted: Boolean(item?.is_deleted),
+    deletedAt: item?.deleted_at,
+    deletedBy: item?.deleted_by,
+    idVerification: {
+      status: item?.id_verification_status || (canonicalStatus === 'active_line' ? 'verified' : 'unverified'),
+    },
+    commission: {
+      amount: Number((monthlyPrice * 1.0).toFixed(2)),
+      status: canonicalStatus === 'active_line' ? 'paid' : 'pending',
+      isClawbackFlagged: false,
+      multiplierUsed: 1.0,
+    },
+  };
+}
+
+/**
+ * Fetch all rows directly from the Supabase 'Airwireless' table.
  */
 export async function fetchLeadsFromSupabase(): Promise<{ data: CustomerRecord[] | null; error: any }> {
   if (!isSupabaseConfigured) {
     return { data: null, error: null };
   }
 
-  const tablesToTry = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
+  try {
+    const res = await supabase.from('Airwireless').select('*');
 
-  for (const tbl of tablesToTry) {
-    try {
-      // First try ordering by submitted_at
-      let res = await supabase.from(tbl).select('*').order('submitted_at', { ascending: false });
-      
-      // If submitted_at column does not exist, try created_at or unordered
-      if (res.error && (res.error.code === '42703' || res.error.message.includes('column') || res.error.message.includes('order'))) {
-        res = await supabase.from(tbl).select('*').order('created_at', { ascending: false });
-      }
-      if (res.error && (res.error.code === '42703' || res.error.message.includes('column'))) {
-        res = await supabase.from(tbl).select('*');
-      }
-
-      if (res.error) {
-        if (res.error.code === '42P01' || res.error.message.includes('does not exist')) {
-          continue; // Try next table
-        }
-        console.warn(`Supabase fetch leads on table "${tbl}" returned:`, res.error.message);
-        continue;
-      }
-
-      if (res.data) {
-        // Format raw database records into CustomerRecord structure
-        const mapped: CustomerRecord[] = res.data.map((item: any) => ({
-          id: item.id !== undefined && item.id !== null ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
-          status: (item.status as CustomerRecord['status']) || 'lead',
-          firstName: item.first_name || item.firstName || item.name?.split(' ')[0] || '',
-          lastName: item.last_name || item.lastName || item.name?.split(' ').slice(1).join(' ') || '',
-          fullName: item.full_name || item.fullName || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim(),
-          email: item.email || '',
-          phone: item.phone || '',
-          preferredPlanId: item.preferred_plan_id || item.preferredPlanId || '',
-          preferredPlanName: item.preferred_plan_name || item.preferredPlanName || item.plan || 'CTExcel Plan',
-          monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 30),
-          salesRep: item.assigned_specialist || item.sales_rep || item.salesRep || 'Unassigned',
-          referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
-          submittedAt: item.submitted_at || item.created_at || new Date().toISOString(),
-          activationStartDate:
-            item.activation_start_date ||
-            item.activationStartDate ||
-            (item.status === 'active_line' ? (item.submitted_at || item.created_at) : undefined),
-          callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
-          notes: item.notes || '',
-          leadFollowUpStatus: item.lead_follow_up_status || item.leadFollowUpStatus || 'new',
-          isDeleted: Boolean(item.is_deleted),
-          deletedAt: item.deleted_at,
-          deletedBy: item.deleted_by,
-          idVerification: {
-            status: item.id_verification_status || 'unverified',
-          },
-          commission: {
-            amount: Number((Number(item.monthly_plan_price || 30) * 1.0).toFixed(2)),
-            status: 'pending',
-            isClawbackFlagged: false,
-            multiplierUsed: 1.0,
-          },
-        }));
-
-        return { data: mapped, error: null };
-      }
-    } catch {
-      continue;
+    if (res.error) {
+      console.error('Supabase fetch error on table "Airwireless":', res.error.message);
+      return { data: null, error: res.error };
     }
-  }
 
-  return { data: [], error: null };
+    const mapped = (res.data || []).map(mapAirwirelessRowToCustomerRecord);
+    mapped.sort((a, b) => {
+      const timeA = new Date(a.submittedAt || 0).getTime();
+      const timeB = new Date(b.submittedAt || 0).getTime();
+      return timeB - timeA;
+    });
+
+    return { data: mapped, error: null };
+  } catch (err: any) {
+    console.error('Unexpected error fetching from Airwireless:', err);
+    return { data: null, error: err };
+  }
 }
 
 /**
@@ -467,31 +507,12 @@ export async function deleteStaffFromSupabase(repId: string, repName?: string, r
   }
 
   try {
-    // 1. Prevent foreign key constraint errors: Reassign any assigned leads or customers to 'Unassigned'
+    // 1. Prevent foreign key constraint errors: Reassign any assigned leads in Airwireless to 'Unassigned'
     if (repName && repName.trim()) {
       try {
-        await supabase.from('leads').update({ sales_rep: 'Unassigned' }).eq('sales_rep', repName.trim());
+        await supabase.from('Airwireless').update({ sales_rep: 'Unassigned' }).eq('sales_rep', repName.trim());
       } catch (fkErr) {
-        console.warn('Note: Non-fatal attempt to unassign leads by sales_rep name:', fkErr);
-      }
-
-      try {
-        await supabase.from('customers').update({ sales_rep: 'Unassigned' }).eq('sales_rep', repName.trim());
-      } catch (fkErr) {
-        console.warn('Note: Non-fatal attempt to unassign customers by sales_rep name:', fkErr);
-      }
-    }
-
-    if (repId) {
-      try {
-        await supabase.from('leads').update({ sales_rep_id: null }).eq('sales_rep_id', repId);
-      } catch {
-        // Table or column may not use sales_rep_id
-      }
-      try {
-        await supabase.from('customers').update({ staff_id: null }).eq('staff_id', repId);
-      } catch {
-        // Table or column may not use staff_id
+        console.warn('Note: Non-fatal attempt to unassign Airwireless rows by sales_rep name:', fkErr);
       }
     }
 
@@ -928,13 +949,14 @@ export async function softDeleteCustomerInSupabase(id: string, deletedBy: string
     deleted_by: deletedBy,
   };
 
-  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
-  for (const tbl of tables) {
-    try {
-      await supabase.from(tbl).update(payload).eq('id', id);
-    } catch {
-      // continue to next table
+  try {
+    const { error } = await supabase.from('Airwireless').update(payload).eq('id', id);
+    if (error) {
+      console.warn('Airwireless soft delete warning:', error.message);
+      return { success: false, error };
     }
+  } catch (err) {
+    return { success: false, error: err };
   }
   return { success: true, error: null };
 }
@@ -952,39 +974,40 @@ export async function restoreCustomerInSupabase(id: string) {
     deleted_by: null,
   };
 
-  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
-  for (const tbl of tables) {
-    try {
-      await supabase.from(tbl).update(payload).eq('id', id);
-    } catch {
-      // continue to next table
+  try {
+    const { error } = await supabase.from('Airwireless').update(payload).eq('id', id);
+    if (error) {
+      console.warn('Airwireless restore warning:', error.message);
+      return { success: false, error };
     }
+  } catch (err) {
+    return { success: false, error: err };
   }
   return { success: true, error: null };
 }
 
 /**
  * 6. HARD DELETE (PERMANENT PURGE) IN SUPABASE:
- * Deletes rows permanently from database
+ * Deletes rows permanently from Airwireless table by primary key id
  */
 export async function hardDeleteCustomersInSupabase(ids: string[]) {
   if (!isSupabaseConfigured) return { success: true, error: null };
 
-  const tables = Array.from(new Set([getLeadsTableName(), 'Airwireless', 'leads', 'customers']));
-  for (const tbl of tables) {
-    try {
-      await supabase.from(tbl).delete().in('id', ids);
-    } catch {
-      // continue
+  try {
+    const { error } = await supabase.from('Airwireless').delete().in('id', ids);
+    if (error) {
+      console.warn('Airwireless hard delete warning:', error.message);
+      return { success: false, error };
     }
+  } catch (err) {
+    return { success: false, error: err };
   }
   return { success: true, error: null };
 }
 
 /**
- * 7. REAL-TIME SUBSCRIPTION FOR LEADS:
- * Subscribes to postgres_changes on the 'leads' table.
- * Automatically triggers callback when new lead is inserted, updated, or deleted.
+ * 7. REAL-TIME SUBSCRIPTION FOR AIRWIRELESS TABLE:
+ * Subscribes to postgres_changes on the exact 'Airwireless' table.
  */
 export function subscribeToLeadsRealtime(
   onInsert: (lead: CustomerRecord) => void,
@@ -995,92 +1018,29 @@ export function subscribeToLeadsRealtime(
 
   try {
     const handlePayload = (payload: any) => {
-      console.log('⚡ Realtime Lead change received:', payload.eventType, payload.new);
+      console.log('⚡ Realtime Airwireless change received:', payload.eventType, payload.new);
 
       if (payload.eventType === 'INSERT' && payload.new) {
-        const raw = payload.new;
-        const newLead: CustomerRecord = {
-          id: raw.id || `LEAD-${Date.now().toString().slice(-4)}`,
-          status: raw.status || 'lead',
-          firstName: raw.first_name || '',
-          lastName: raw.last_name || '',
-          fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim() || 'New Lead',
-          email: raw.email || '',
-          phone: raw.phone || '',
-          preferredPlanId: raw.preferred_plan_id || '',
-          preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
-          monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
-          salesRep: raw.sales_rep || 'Unassigned',
-          referralSource: raw.referral_source || 'Website Lead Capture',
-          submittedAt: raw.submitted_at || new Date().toISOString(),
-          callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
-          notes: raw.notes || '',
-          leadFollowUpStatus: raw.lead_follow_up_status || 'new',
-          isDeleted: Boolean(raw.is_deleted),
-          deletedAt: raw.deleted_at,
-          deletedBy: raw.deleted_by,
-          idVerification: {
-            status: raw.id_verification_status || 'unverified',
-          },
-          commission: {
-            amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
-            status: 'pending',
-            isClawbackFlagged: false,
-            multiplierUsed: 1.0,
-          },
-        };
-        onInsert(newLead);
+        onInsert(mapAirwirelessRowToCustomerRecord(payload.new));
       } else if (payload.eventType === 'UPDATE' && payload.new && onUpdate) {
-        const raw = payload.new;
-        const updated: CustomerRecord = {
-          id: raw.id,
-          status: raw.status || 'lead',
-          firstName: raw.first_name || '',
-          lastName: raw.last_name || '',
-          fullName: raw.full_name || `${raw.first_name || ''} ${raw.last_name || ''}`.trim(),
-          email: raw.email || '',
-          phone: raw.phone || '',
-          preferredPlanId: raw.preferred_plan_id || '',
-          preferredPlanName: raw.preferred_plan_name || 'CTExcel Plan',
-          monthlyPlanPrice: Number(raw.monthly_plan_price || 30),
-          salesRep: raw.sales_rep || 'Unassigned',
-          referralSource: raw.referral_source || 'Website Lead Capture',
-          submittedAt: raw.submitted_at || new Date().toISOString(),
-          callbackTimePreference: raw.callback_time_preference || 'As soon as possible',
-          notes: raw.notes || '',
-          leadFollowUpStatus: raw.lead_follow_up_status || 'new',
-          isDeleted: Boolean(raw.is_deleted),
-          deletedAt: raw.deleted_at,
-          deletedBy: raw.deleted_by,
-          idVerification: {
-            status: raw.id_verification_status || 'unverified',
-          },
-          commission: {
-            amount: Number((Number(raw.monthly_plan_price || 30) * 1.0).toFixed(2)),
-            status: 'pending',
-            isClawbackFlagged: false,
-            multiplierUsed: 1.0,
-          },
-        };
-        onUpdate(updated);
+        onUpdate(mapAirwirelessRowToCustomerRecord(payload.new));
       } else if (payload.eventType === 'DELETE' && payload.old && onDelete) {
-        onDelete(payload.old.id);
+        onDelete(String(payload.old.id));
       }
     };
 
     const channel = supabase
-      .channel('leads-realtime-feed')
+      .channel('airwireless-realtime-feed')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Airwireless' }, handlePayload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, handlePayload)
       .subscribe((status: string) => {
-        console.log('📡 Supabase Leads realtime status:', status);
+        console.log('📡 Supabase Airwireless realtime status:', status);
       });
 
     return () => {
       supabase.removeChannel(channel);
     };
   } catch (err) {
-    console.error('Failed to initialize Realtime subscription on leads:', err);
+    console.error('Failed to initialize Realtime subscription on Airwireless:', err);
     return () => {};
   }
 }

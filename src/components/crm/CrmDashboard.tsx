@@ -1,9 +1,8 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { CustomerRecord, Plan, CMSConfig, StaffRep, CustomerStatus, LeadFollowUpStatus } from '../../types/telecom';
 import {
   calculateDaysBetween,
   canStaffViewRecord,
-  canStaffViewLead,
   canStaffViewActiveLine,
   canStaffViewNonActiveLine,
   TelecomStorage,
@@ -24,6 +23,8 @@ import {
   supabase,
   restoreCustomerInSupabase,
   hardDeleteCustomersInSupabase,
+  mapAirwirelessRowToCustomerRecord,
+  toAirwirelessDbStatus,
 } from '../../services/supabase';
 import {
   Users,
@@ -117,67 +118,39 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   const [isBulkProcessing, setIsBulkProcessing] = useState<boolean>(false);
   const [bulkActionNotice, setBulkActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Force Live Fetch: Ensure the component mounts and immediately runs await supabase.from('Airwireless').select('*')
-  // Strictly NO .eq('user_id', ...) or device-specific filters!
-  const fetchLiveLeads = useCallback(async () => {
+  const onUpdateCustomersRef = useRef(onUpdateCustomers);
+  onUpdateCustomersRef.current = onUpdateCustomers;
+
+  // Universal Live Refresh: Fetches all rows from Supabase 'Airwireless' table (including UUID `id`),
+  // updates React state cleanly, and keeps App customers in sync.
+  const refreshData = useCallback(async () => {
     setIsRefreshingLeads(true);
     setDbFetchError(null);
     try {
-      const res = await supabase.from('Airwireless').select('*');
-      if (res.error) {
-        console.error('Supabase live fetch error on Airwireless:', res.error);
-        setDbFetchError(res.error.message || 'Error fetching leads from Supabase');
+      const { data, error } = await supabase.from('Airwireless').select('*');
+      if (error) {
+        console.error('Supabase live fetch error on Airwireless:', error);
+        setDbFetchError(error.message || 'Error fetching records from Supabase Airwireless table');
         return;
       }
 
-      if (res.data) {
-        const mapped: CustomerRecord[] = res.data.map((item: any) => ({
-          id: item.id !== undefined && item.id !== null ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
-          status: (item.status as CustomerStatus) || 'lead',
-          firstName: item.first_name || item.firstName || item.name?.split(' ')[0] || '',
-          lastName: item.last_name || item.lastName || item.name?.split(' ').slice(1).join(' ') || '',
-          fullName: item.full_name || item.fullName || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'Website Customer',
-          email: item.email || '',
-          phone: item.phone || '',
-          preferredPlanId: item.preferred_plan_id || item.preferredPlanId || 'ctexcel-27-50gb',
-          preferredPlanName: item.preferred_plan_name || item.preferredPlanName || item.plan || '$27 / 50GB 5G Plan',
-          monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 27),
-          salesRep: item.assigned_specialist || item.sales_rep || item.salesRep || 'Unassigned',
-          referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
-          submittedAt: item.submitted_at || item.created_at || new Date().toISOString(),
-          activationStartDate:
-            item.activation_start_date ||
-            item.activationStartDate ||
-            (item.status === 'active_line' ? (item.submitted_at || item.created_at) : undefined),
-          callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
-          notes: item.notes || '',
-          leadFollowUpStatus: (item.lead_follow_up_status as LeadFollowUpStatus) || (item.leadFollowUpStatus as LeadFollowUpStatus) || 'new',
-          isDeleted: Boolean(item.is_deleted),
-          deletedAt: item.deleted_at,
-          deletedBy: item.deleted_by,
-          idVerification: {
-            status: item.id_verification_status || 'unverified',
-          },
-          commission: {
-            amount: Number((Number(item.monthly_plan_price || 27) * 1.0).toFixed(2)),
-            status: 'pending',
-            isClawbackFlagged: false,
-            multiplierUsed: 1.0,
-          },
-        }));
+      const mapped: CustomerRecord[] = (data || [])
+        .filter((item: any) => item && item.id !== undefined && item.id !== null)
+        .map(mapAirwirelessRowToCustomerRecord);
 
-        mapped.sort((a, b) => {
-          const timeA = new Date(a.submittedAt || 0).getTime();
-          const timeB = new Date(b.submittedAt || 0).getTime();
-          return timeB - timeA;
-        });
+      mapped.sort((a, b) => {
+        const timeA = new Date(a.submittedAt || 0).getTime();
+        const timeB = new Date(b.submittedAt || 0).getTime();
+        return timeB - timeA;
+      });
 
-        // Set exclusively from Supabase data with a fresh array reference. Do not touch or append LocalStorage.
-        setLiveDbLeads([...mapped]);
-        setLastRefreshedAt(new Date());
+      setLiveDbLeads([...mapped]);
+      setLastRefreshedAt(new Date());
+      if (onUpdateCustomersRef.current) {
+        onUpdateCustomersRef.current([...mapped]);
       }
     } catch (err: any) {
-      console.error('Exception fetching live leads from Airwireless:', err);
+      console.error('Exception fetching live records from Airwireless:', err);
       setDbFetchError(err?.message || 'Failed to connect to Supabase database');
       setLiveDbLeads([]);
     } finally {
@@ -185,21 +158,15 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   }, []);
 
-  // Force global fetch immediately on component mount (NO auto-refresh interval)
+  // Force global fetch immediately on component mount
   useEffect(() => {
-    fetchLiveLeads();
-  }, [fetchLiveLeads]);
+    refreshData();
+  }, [refreshData]);
 
-  // Combined real database records (Supabase Airwireless + synced local state)
+  // Authoritative dataset from Supabase Airwireless when loaded
   const mergedDatabaseCustomers = useMemo(() => {
-    if (!liveDbLeads) return customers;
-    const byId = new Map<string, CustomerRecord>();
-    customers.forEach((c) => byId.set(c.id, c));
-    liveDbLeads.forEach((dbRow) => {
-      const existing = byId.get(dbRow.id);
-      byId.set(dbRow.id, existing ? { ...existing, ...dbRow } : dbRow);
-    });
-    return Array.from(byId.values());
+    if (liveDbLeads !== null) return liveDbLeads;
+    return customers;
   }, [customers, liveDbLeads]);
 
   // Available months dynamically extracted from real customer records
@@ -215,11 +182,10 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     return Array.from(monthSet).sort().reverse();
   }, [mergedDatabaseCustomers]);
 
-  // Stop using LocalStorage for Admin Data:
-  // Only display what is returned from the Supabase fetch. Do NOT fall back to LocalStorage or local state appends.
+  // Leads tab shows un-converted leads directly from the Supabase Airwireless fetch
   const leads = useMemo(() => {
     if (!liveDbLeads) return [];
-    return liveDbLeads;
+    return liveDbLeads.filter((c) => !c.isDeleted && c.status === 'lead');
   }, [liveDbLeads]);
 
   const activeLines = useMemo(() => {
@@ -235,38 +201,37 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   }, [mergedDatabaseCustomers, currentStaff]);
 
   const rbacAccessibleCustomers = useMemo(() => {
-    return customers.filter(
+    return mergedDatabaseCustomers.filter(
       (c) => !c.isDeleted && canStaffViewRecord(currentStaff, c.salesRep)
     );
-  }, [customers, currentStaff]);
+  }, [mergedDatabaseCustomers, currentStaff]);
 
   // Master Admin Recycle Bin (All Soft-Deleted Records)
   const deletedItems = useMemo(() => {
-    return customers.filter((c) => Boolean(c.isDeleted));
-  }, [customers]);
+    return mergedDatabaseCustomers.filter((c) => Boolean(c.isDeleted));
+  }, [mergedDatabaseCustomers]);
 
   // Restore handler
-  const handleRestore = (ids: string[]) => {
+  const handleRestore = async (ids: string[]) => {
     if (onRestoreCustomers) {
-      onRestoreCustomers(ids);
+      await onRestoreCustomers(ids);
     } else {
-      ids.forEach((id) => {
-        TelecomStorage.restoreCustomer(id);
-        restoreCustomerInSupabase(id);
-      });
-      onUpdateCustomers?.(TelecomStorage.getCustomers());
+      for (const id of ids) {
+        await restoreCustomerInSupabase(id);
+      }
     }
+    await refreshData();
   };
 
   // Hard delete handler with database purge
-  const handleHardDelete = (ids: string[]) => {
+  const handleHardDelete = async (ids: string[]) => {
     if (onHardDeleteCustomers) {
-      onHardDeleteCustomers(ids);
+      await onHardDeleteCustomers(ids);
     } else {
-      TelecomStorage.hardDeleteCustomers(ids);
-      hardDeleteCustomersInSupabase(ids);
-      onUpdateCustomers?.(TelecomStorage.getCustomers());
+      await hardDeleteCustomersInSupabase(ids);
     }
+    await refreshData();
+    setSelectedIds([]);
   };
 
   // Automated 180-day clawback counts
@@ -383,36 +348,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     });
   }, []);
 
-  // Helper to update Airwireless table using assigned_specialist (with sales_rep schema fallback on Airwireless)
-  const updateAirwirelessAssign = async (ids: string[], repName: string) => {
-    let res = await supabase
-      .from('Airwireless')
-      .update({ assigned_specialist: repName })
-      .in('id', ids);
-
-    if (
-      res.error &&
-      (res.error.code === '42703' ||
-        res.error.code === 'PGRST204' ||
-        res.error.message?.includes('assigned_specialist'))
-    ) {
-      res = await supabase
-        .from('Airwireless')
-        .update({ sales_rep: repName })
-        .in('id', ids);
-    }
-
-    return res;
-  };
-
   // Bulk Delete Selected Leads
   const handleBulkDeleteLeads = async () => {
-    if (selectedIds.length === 0) return;
+    const idsToDelete = selectedIds.filter(Boolean);
+    if (idsToDelete.length === 0) return;
 
-    const idsToDelete = [...selectedIds];
     const count = idsToDelete.length;
     const confirmed = window.confirm(
-      `Are you sure you want to delete ${count} lead${count === 1 ? '' : 's'}?`
+      `Are you sure you want to permanently delete ${count} record${count === 1 ? '' : 's'} from Airwireless?`
     );
     if (!confirmed) return;
 
@@ -421,29 +364,24 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
 
     try {
-      const res = await supabase.from('Airwireless').delete().in('id', idsToDelete);
+      const { error } = await supabase
+        .from('Airwireless')
+        .delete()
+        .in('id', idsToDelete);
 
-      if (res.error) {
-        console.error('Supabase bulk delete error on Airwireless:', res.error);
-        const msg = res.error.message || 'Failed to delete selected leads from Supabase.';
+      if (error) {
+        console.error('Supabase bulk delete error on Airwireless:', error);
+        const msg = error.message || 'Failed to delete selected leads from Supabase.';
         setDbFetchError(msg);
         setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
         return;
       }
 
-      // Immediately update local table state so deleted rows disappear at once
-      const deletedSet = new Set(idsToDelete);
-      setLiveDbLeads((prev) => (prev ? prev.filter((item) => !deletedSet.has(item.id)) : prev));
-      if (onUpdateCustomers) {
-        onUpdateCustomers(customers.filter((c) => !deletedSet.has(c.id)));
-      }
-
-      // Re-trigger the main Supabase Airwireless.select('*') fetch and clear selection
-      await fetchLiveLeads();
+      await refreshData();
       setSelectedIds([]);
       setBulkActionNotice({
         type: 'success',
-        message: `Successfully deleted ${count} lead${count === 1 ? '' : 's'} from Airwireless.`,
+        message: `Successfully deleted ${count} record${count === 1 ? '' : 's'} from Airwireless.`,
       });
     } catch (err: any) {
       console.error('Exception during bulk delete:', err);
@@ -455,44 +393,78 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   };
 
-  // Bulk Assign Selected Leads
-  const handleBulkAssignLeads = async (selectedRep: string) => {
-    if (selectedIds.length === 0 || !selectedRep) return;
+  // Single-Row Permanent Delete (.delete().eq('id', leadId))
+  const handleDeleteLead = async (record: CustomerRecord) => {
+    const leadId = record?.id;
+    if (!leadId) {
+      setBulkActionNotice({ type: 'error', message: 'Cannot delete record: missing primary key id.' });
+      return;
+    }
 
-    const idsToAssign = [...selectedIds];
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete ${record.fullName} from Airwireless?`
+    );
+    if (!confirmed) return;
+
+    setIsBulkProcessing(true);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    try {
+      const { error } = await supabase
+        .from('Airwireless')
+        .delete()
+        .eq('id', leadId);
+
+      if (error) {
+        console.error('Supabase single delete error on Airwireless:', error);
+        const msg = error.message || 'Failed to delete record from Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+        return;
+      }
+
+      await refreshData();
+      setSelectedIds([]);
+      setBulkActionNotice({
+        type: 'success',
+        message: `Deleted ${record.fullName} from Airwireless.`,
+      });
+    } catch (err: any) {
+      console.error('Exception during single delete:', err);
+      const msg = err?.message || 'Unexpected error deleting record.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Bulk Assign Selected Leads (.update({ sales_rep }).in('id', ids))
+  const handleBulkAssignLeads = async (selectedRep: string) => {
+    const idsToAssign = selectedIds.filter(Boolean);
+    if (idsToAssign.length === 0 || !selectedRep) return;
+
     const count = idsToAssign.length;
     setIsBulkProcessing(true);
     setBulkActionNotice(null);
     setDbFetchError(null);
 
     try {
-      const res = await updateAirwirelessAssign(idsToAssign, selectedRep);
+      const { error } = await supabase
+        .from('Airwireless')
+        .update({ sales_rep: selectedRep })
+        .in('id', idsToAssign);
 
-      if (res.error) {
-        console.error('Supabase bulk assign error on Airwireless:', res.error);
-        const msg = res.error.message || 'Failed to assign selected leads in Supabase.';
+      if (error) {
+        console.error('Supabase bulk assign error on Airwireless:', error);
+        const msg = error.message || 'Failed to assign selected leads in Supabase.';
         setDbFetchError(msg);
         setBulkActionNotice({ type: 'error', message: `Assign failed: ${msg}` });
         return;
       }
 
-      // Immediately reflect updated rep in UI state
-      const assignedSet = new Set(idsToAssign);
-      setLiveDbLeads((prev) =>
-        prev
-          ? prev.map((item) =>
-              assignedSet.has(item.id) ? { ...item, salesRep: selectedRep } : item
-            )
-          : prev
-      );
-      if (onUpdateCustomers) {
-        onUpdateCustomers(
-          customers.map((c) => (assignedSet.has(c.id) ? { ...c, salesRep: selectedRep } : c))
-        );
-      }
-
-      // Re-trigger the main Supabase Airwireless.select('*') fetch and clear selection
-      await fetchLiveLeads();
+      await refreshData();
       setSelectedIds([]);
       setBulkActionNotice({
         type: 'success',
@@ -508,97 +480,165 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   };
 
-  // Handle Lead Assignment by Admin (Single row -> Supabase + refresh)
+  // Single-Row Assign Staff (.update({ sales_rep: repName }).eq('id', leadId))
   const handleAssignLead = async (leadId: string, repName: string) => {
+    if (!leadId || !repName) return;
+    setIsBulkProcessing(true);
     setBulkActionNotice(null);
-    const updated = TelecomStorage.assignLead(leadId, repName, currentStaff.name);
-    if (updated) {
-      onSaveCustomer(leadId, updated);
-    }
+    setDbFetchError(null);
 
-    const res = await updateAirwirelessAssign([leadId], repName);
-    if (res.error) {
-      console.error('Supabase single lead assign error:', res.error);
-      setDbFetchError(res.error.message || 'Failed to update assigned specialist in Supabase.');
-      setBulkActionNotice({
-        type: 'error',
-        message: `Assign failed: ${res.error.message}`,
-      });
-      return;
-    }
-
-    await fetchLiveLeads();
-    setSelectedIds([]);
-  };
-
-  // Handle Quick Status Update for Leads (Single row -> Supabase + refresh)
-  const handleUpdateLeadStatus = async (id: string, newStatus: LeadFollowUpStatus) => {
-    setBulkActionNotice(null);
-    onSaveCustomer(id, { leadFollowUpStatus: newStatus });
-
-    const res = await supabase
-      .from('Airwireless')
-      .update({ lead_follow_up_status: newStatus })
-      .eq('id', id);
-
-    if (res.error) {
-      console.error('Supabase lead status update error:', res.error);
-      setDbFetchError(res.error.message || 'Failed to update lead status in Supabase.');
-      return;
-    }
-
-    await fetchLiveLeads();
-    setSelectedIds([]);
-  };
-
-  // Handle Quick Activate from Lead to Active Line
-  const handleQuickActivate = async (lead: CustomerRecord) => {
-    const today = new Date().toISOString().split('T')[0];
-    const rep = staffMembers.find((s) => s.name === lead.salesRep);
-    const multiplier = rep ? rep.commissionMultiplier : (lead.commission?.multiplierUsed || 1.0);
-    const commissionVal = Number(((lead.monthlyPlanPrice || 30) * multiplier).toFixed(2));
-
-    const updates: Partial<CustomerRecord> = {
-      status: 'active_line',
-      activationStartDate: today,
-      activatedPhone: lead.activatedPhone || lead.phone,
-      idVerification: {
-        ...lead.idVerification,
-        status: 'verified',
-        verifiedBy: currentStaff.name,
-        verifiedAt: new Date().toISOString(),
-      },
-      commission: {
-        ...lead.commission,
-        amount: commissionVal,
-        multiplierUsed: multiplier,
-        multiplierLockedAt: new Date().toISOString(),
-        status: 'paid',
-        payoutDate: today,
-        isClawbackFlagged: false,
-      },
-      notes: `${lead.notes || ''}\n[Activated on ${today} by ${currentStaff.name} with locked ${multiplier}x multiplier]`,
-    };
-    onSaveCustomer(lead.id, updates);
-
-    const actRes = await supabase
-      .from('Airwireless')
-      .update({ status: 'active_line', activation_start_date: today })
-      .eq('id', lead.id);
-    if (actRes.error && (actRes.error.code === '42703' || actRes.error.code === 'PGRST204' || actRes.error.message?.includes('activation_start_date'))) {
-      await supabase
+    try {
+      const { error } = await supabase
         .from('Airwireless')
-        .update({ status: 'active_line' })
-        .eq('id', lead.id);
-    }
+        .update({ sales_rep: repName })
+        .eq('id', leadId);
 
-    await fetchLiveLeads();
-    setSelectedIds([]);
+      if (error) {
+        console.error('Supabase single lead assign error on Airwireless:', error);
+        const msg = error.message || 'Failed to update sales_rep in Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Assign failed: ${msg}` });
+        return;
+      }
+
+      await refreshData();
+      setSelectedIds([]);
+      setBulkActionNotice({
+        type: 'success',
+        message: `Assigned record to ${repName}.`,
+      });
+    } catch (err: any) {
+      console.error('Exception during single assign:', err);
+      const msg = err?.message || 'Unexpected error assigning rep.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Assign failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
   };
 
-  // Wrapper for saving customer profile edits with automatic Supabase lead sync & refresh
+  // Single-Row Follow-Up Status Update (.update({ lead_follow_up_status: newStatus }).eq('id', leadId))
+  const handleUpdateLeadStatus = async (leadId: string, newStatus: LeadFollowUpStatus) => {
+    if (!leadId) return;
+    setIsBulkProcessing(true);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    try {
+      const { error } = await supabase
+        .from('Airwireless')
+        .update({ lead_follow_up_status: newStatus })
+        .eq('id', leadId);
+
+      if (error) {
+        console.error('Supabase lead follow-up status update error on Airwireless:', error);
+        const msg = error.message || 'Failed to update follow-up status in Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Status update failed: ${msg}` });
+        return;
+      }
+
+      await refreshData();
+      setSelectedIds([]);
+    } catch (err: any) {
+      console.error('Exception updating lead follow-up status:', err);
+      const msg = err?.message || 'Unexpected error updating lead status.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Status update failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Activate Line (.update({ status: 'Active' }).eq('id', leadId))
+  const handleQuickActivate = async (lead: CustomerRecord) => {
+    const leadId = lead?.id;
+    if (!leadId) {
+      setBulkActionNotice({ type: 'error', message: 'Cannot activate: missing primary key id.' });
+      return;
+    }
+
+    setIsBulkProcessing(true);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    try {
+      const { error } = await supabase
+        .from('Airwireless')
+        .update({ status: 'Active' })
+        .eq('id', leadId);
+
+      if (error) {
+        console.error('Supabase Activate Line error on Airwireless:', error);
+        const msg = error.message || 'Failed to activate line in Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Activate failed: ${msg}` });
+        return;
+      }
+
+      await refreshData();
+      setSelectedIds([]);
+      setBulkActionNotice({
+        type: 'success',
+        message: `${lead.fullName} activated and moved to Active Lines.`,
+      });
+    } catch (err: any) {
+      console.error('Exception activating line:', err);
+      const msg = err?.message || 'Unexpected error activating line.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Activate failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Move to Non-Active (.update({ status: 'Non-Active' }).eq('id', leadId))
+  const handleDeactivateLine = async (record: CustomerRecord) => {
+    const leadId = record?.id;
+    if (!leadId) {
+      setBulkActionNotice({ type: 'error', message: 'Cannot move to Non-Active: missing primary key id.' });
+      return;
+    }
+
+    setIsBulkProcessing(true);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    try {
+      const { error } = await supabase
+        .from('Airwireless')
+        .update({ status: 'Non-Active' })
+        .eq('id', leadId);
+
+      if (error) {
+        console.error('Supabase Non-Active update error on Airwireless:', error);
+        const msg = error.message || 'Failed to move line to Non-Active in Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Move to Non-Active failed: ${msg}` });
+        return;
+      }
+
+      await refreshData();
+      setSelectedIds([]);
+      setBulkActionNotice({
+        type: 'success',
+        message: `${record.fullName} moved to Non-Active Lines.`,
+      });
+    } catch (err: any) {
+      console.error('Exception moving line to Non-Active:', err);
+      const msg = err?.message || 'Unexpected error moving line to Non-Active.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Move to Non-Active failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Wrapper for saving customer profile edits with automatic Supabase Airwireless sync & refresh
   const handleModalSaveCustomer = async (id: string, updates: Partial<CustomerRecord>) => {
-    onSaveCustomer(id, updates);
+    if (!id) return;
+    setBulkActionNotice(null);
+    setDbFetchError(null);
 
     const leadPayload: Record<string, any> = {};
     if (updates.firstName !== undefined) leadPayload.first_name = updates.firstName;
@@ -609,62 +649,86 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     if (updates.preferredPlanName !== undefined) leadPayload.preferred_plan_name = updates.preferredPlanName;
     if (updates.preferredPlanId !== undefined) leadPayload.preferred_plan_id = updates.preferredPlanId;
     if (updates.notes !== undefined) leadPayload.notes = updates.notes;
-    if (updates.status !== undefined) leadPayload.status = updates.status;
-    if (updates.activationStartDate !== undefined) leadPayload.activation_start_date = updates.activationStartDate;
-
-    if (updates.salesRep !== undefined) {
-      await updateAirwirelessAssign([id], updates.salesRep);
-    }
+    if (updates.status !== undefined) leadPayload.status = toAirwirelessDbStatus(updates.status);
+    if (updates.salesRep !== undefined) leadPayload.sales_rep = updates.salesRep;
 
     if (Object.keys(leadPayload).length > 0) {
-      const saveRes = await supabase.from('Airwireless').update(leadPayload).eq('id', id);
-      if (
-        saveRes.error &&
-        leadPayload.activation_start_date !== undefined &&
-        (saveRes.error.code === '42703' || saveRes.error.code === 'PGRST204' || saveRes.error.message?.includes('activation_start_date'))
-      ) {
-        const { activation_start_date: _ignored, ...restPayload } = leadPayload;
-        if (Object.keys(restPayload).length > 0) {
-          await supabase.from('Airwireless').update(restPayload).eq('id', id);
-        }
+      const { error } = await supabase
+        .from('Airwireless')
+        .update(leadPayload)
+        .eq('id', id);
+
+      if (error) {
+        console.error('Supabase modal save error on Airwireless:', error);
+        const msg = error.message || 'Failed to save changes to Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Save failed: ${msg}` });
+        return;
       }
     }
 
-    await fetchLiveLeads();
+    onSaveCustomer(id, updates);
+    await refreshData();
     setSelectedIds([]);
   };
 
   // Wrapper for deleting customer/lead from profile modal with automatic Supabase sync & refresh
   const handleModalDeleteCustomer = async (id: string) => {
+    if (!id) return;
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    const { error } = await supabase
+      .from('Airwireless')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Supabase modal delete error on Airwireless:', error);
+      const msg = error.message || 'Failed to delete record from Supabase.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+      return;
+    }
+
     onDeleteCustomer(id);
-    await supabase.from('Airwireless').delete().eq('id', id);
-    await fetchLiveLeads();
+    await refreshData();
     setSelectedIds([]);
   };
 
-  // Wrapper for adding a manual lead with automatic refresh
+  // Wrapper for adding a manual lead/line directly to Airwireless with automatic refresh
   const handleModalAddCustomer = async (customer: CustomerRecord) => {
-    onAddCustomer(customer);
-    if (customer.status === 'lead') {
-      await supabase.from('Airwireless').insert([
-        {
-          first_name: customer.firstName,
-          last_name: customer.lastName,
-          full_name: customer.fullName,
-          email: customer.email,
-          phone: customer.phone,
-          preferred_plan_id: customer.preferredPlanId,
-          preferred_plan_name: customer.preferredPlanName,
-          monthly_plan_price: customer.monthlyPlanPrice,
-          assigned_specialist: customer.salesRep || 'Unassigned',
-          referral_source: customer.referralSource || 'Manual CRM Entry',
-          status: 'lead',
-          notes: customer.notes || '',
-        },
-      ]);
-      await fetchLiveLeads();
-      setSelectedIds([]);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    const { error } = await supabase.from('Airwireless').insert([
+      {
+        first_name: customer.firstName,
+        last_name: customer.lastName,
+        full_name: customer.fullName,
+        email: customer.email,
+        phone: customer.phone,
+        preferred_plan_id: customer.preferredPlanId,
+        preferred_plan_name: customer.preferredPlanName,
+        monthly_plan_price: customer.monthlyPlanPrice,
+        sales_rep: customer.salesRep || 'Unassigned',
+        referral_source: customer.referralSource || 'Manual CRM Entry',
+        status: toAirwirelessDbStatus(customer.status),
+        notes: customer.notes || '',
+      },
+    ]);
+
+    if (error) {
+      console.error('Supabase add record error on Airwireless:', error);
+      const msg = error.message || 'Failed to add record to Supabase.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Add record failed: ${msg}` });
+      return;
     }
+
+    onAddCustomer(customer);
+    await refreshData();
+    setSelectedIds([]);
   };
 
   // Handle Commission toggle from Clawback Tracker
@@ -918,13 +982,13 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             )}
 
             {/* Refresh Leads Button (Direct Airwireless Supabase fetch) */}
-            {activeTab === 'leads' && (
+            {(activeTab === 'leads' || activeTab === 'active_lines' || activeTab === 'non_active_lines') && (
               <button
                 type="button"
-                onClick={fetchLiveLeads}
+                onClick={refreshData}
                 disabled={isRefreshingLeads}
                 className="flex items-center gap-1.5 rounded-xl border border-emerald-600 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 disabled:opacity-60 px-3.5 py-2 text-xs font-bold text-white transition-colors shadow-2xs cursor-pointer"
-                title="Fetch latest cross-device leads directly from Airwireless table in Supabase"
+                title="Fetch latest cross-device records directly from Airwireless table in Supabase"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingLeads ? 'animate-spin' : ''}`} />
                 <span>{isRefreshingLeads ? 'Refreshing...' : 'Refresh Leads'}</span>
@@ -1035,8 +1099,10 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             onOpenCustomer={(customer) => setSelectedCustomer(customer)}
             onUpdateStatus={handleUpdateLeadStatus}
             onQuickActivate={handleQuickActivate}
+            onDeactivateLead={handleDeactivateLine}
+            onDeleteLead={handleDeleteLead}
             onAssignLead={handleAssignLead}
-            onRefreshLeads={fetchLiveLeads}
+            onRefreshLeads={refreshData}
             isRefreshing={isRefreshingLeads}
             lastRefreshedAt={lastRefreshedAt}
             dbFetchError={dbFetchError}
@@ -1057,7 +1123,15 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             lines={filteredDataset}
             type="active"
             isMasterAdmin={isMasterAdmin}
+            staffMembers={staffMembers}
             onOpenCustomer={(customer) => setSelectedCustomer(customer)}
+            onActivateLine={handleQuickActivate}
+            onDeactivateLine={handleDeactivateLine}
+            onDeleteLine={handleDeleteLead}
+            onAssignLead={handleAssignLead}
+            isProcessing={isBulkProcessing}
+            actionNotice={bulkActionNotice}
+            onDismissNotice={() => setBulkActionNotice(null)}
           />
         )}
 
@@ -1066,7 +1140,15 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             lines={filteredDataset}
             type="non_active"
             isMasterAdmin={isMasterAdmin}
+            staffMembers={staffMembers}
             onOpenCustomer={(customer) => setSelectedCustomer(customer)}
+            onActivateLine={handleQuickActivate}
+            onDeactivateLine={handleDeactivateLine}
+            onDeleteLine={handleDeleteLead}
+            onAssignLead={handleAssignLead}
+            isProcessing={isBulkProcessing}
+            actionNotice={bulkActionNotice}
+            onDismissNotice={() => setBulkActionNotice(null)}
           />
         )}
 
@@ -1075,13 +1157,13 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             customers={mergedDatabaseCustomers}
             isMasterAdmin={isMasterAdmin}
             currentStaffName={currentStaff.name}
-            onRefreshData={fetchLiveLeads}
+            onRefreshData={refreshData}
           />
         )}
 
         {activeTab === 'commissions' && (
           <ClawbackTracker
-            customers={customers}
+            customers={mergedDatabaseCustomers}
             staffMembers={staffMembers}
             currentStaff={currentStaff}
             onOpenCustomer={(customer) => setSelectedCustomer(customer)}
@@ -1095,7 +1177,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           <StaffManagement
             staffMembers={staffMembers}
             currentStaff={currentStaff}
-            customers={customers}
+            customers={mergedDatabaseCustomers}
             onUpdateCustomers={onUpdateCustomers}
             onUpdateStaffList={onUpdateStaffList || ((l) => TelecomStorage.saveStaff(l))}
           />
@@ -1151,7 +1233,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       <ExcelExportModal
         isOpen={isExcelExportModalOpen}
         onClose={() => setIsExcelExportModalOpen(false)}
-        customers={customers}
+        customers={mergedDatabaseCustomers}
         staffMembers={staffMembers}
         isMasterAdmin={isMasterAdmin}
       />
