@@ -1,21 +1,19 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { CustomerRecord, LeadFollowUpStatus, StaffRep } from '../../types/telecom';
 import {
   Phone,
   Mail,
   Clock,
-  ArrowRight,
-  UserCheck,
-  CheckCircle2,
   ChevronRight,
   Zap,
   Inbox,
   UserPlus,
-  Shield,
-  Send,
   RefreshCw,
   AlertTriangle,
   Database,
+  Trash2,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 
 interface LeadsTableProps {
@@ -30,6 +28,15 @@ interface LeadsTableProps {
   isRefreshing?: boolean;
   lastRefreshedAt?: Date | null;
   dbFetchError?: string | null;
+  selectedIds: string[];
+  onToggleSelect: (id: string) => void;
+  onToggleSelectAll: (leadIds: string[]) => void;
+  onClearSelection?: () => void;
+  onBulkDelete: () => Promise<void> | void;
+  onBulkAssign: (repName: string) => Promise<void> | void;
+  isBulkProcessing?: boolean;
+  bulkActionNotice?: { type: 'success' | 'error'; message: string } | null;
+  onDismissNotice?: () => void;
 }
 
 export const LeadsTable: React.FC<LeadsTableProps> = ({
@@ -44,20 +51,45 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   isRefreshing = false,
   lastRefreshedAt,
   dbFetchError,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
+  onClearSelection,
+  onBulkDelete,
+  onBulkAssign,
+  isBulkProcessing = false,
+  bulkActionNotice,
+  onDismissNotice,
 }) => {
   const isAdmin =
     currentStaff.role === 'admin' ||
     currentStaff.role === 'super_admin' ||
     Boolean(currentStaff.isMasterAdmin);
 
-  // Separate Unassigned leads (Master Pool) vs Assigned leads
+  const [bulkSelectedRep, setBulkSelectedRep] = useState<string>('');
+  const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
+
+  const visibleLeadIds = leads.map((l) => l.id);
+  const selectedVisibleCount = visibleLeadIds.filter((id) => selectedIds.includes(id)).length;
+  const allSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
+  const someSelected = selectedVisibleCount > 0 && !allSelected;
+
+  useEffect(() => {
+    if (selectAllCheckboxRef.current) {
+      selectAllCheckboxRef.current.indeterminate = someSelected;
+    }
+  }, [someSelected]);
+
+  // Separate Unassigned leads count for header badge
   const unassignedLeads = leads.filter(
     (l) => l.salesRep === 'Unassigned' || !l.salesRep || l.salesRep === 'Direct / Web'
   );
 
-  const assignedLeads = leads.filter(
-    (l) => l.salesRep !== 'Unassigned' && l.salesRep !== 'Direct / Web' && Boolean(l.salesRep)
-  );
+  const handleBulkAssignClick = async () => {
+    if (!bulkSelectedRep || selectedIds.length === 0) return;
+    await onBulkAssign(bulkSelectedRep);
+    setBulkSelectedRep('');
+  };
 
   return (
     <div className="space-y-6">
@@ -107,18 +139,115 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
         )}
       </div>
 
+      {/* Bulk Action Result Notification */}
+      {bulkActionNotice && (
+        <div
+          className={`flex items-center justify-between gap-3 rounded-2xl border p-3.5 text-xs shadow-2xs ${
+            bulkActionNotice.type === 'success'
+              ? 'border-emerald-300 bg-emerald-50 text-emerald-950'
+              : 'border-rose-300 bg-rose-50 text-rose-950'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {bulkActionNotice.type === 'success' ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+            )}
+            <span className="font-semibold">{bulkActionNotice.message}</span>
+          </div>
+          {onDismissNotice && (
+            <button
+              type="button"
+              onClick={onDismissNotice}
+              className="rounded-lg p-1 hover:bg-black/5 transition-colors"
+              aria-label="Dismiss message"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Surface Database Fetch Error if present */}
       {dbFetchError && (
         <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 shadow-2xs">
           <div className="flex items-start gap-2.5">
             <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold text-amber-950">Database Query Alert</p>
+              <p className="font-bold text-amber-950">Database Query / Permission Alert</p>
               <p className="mt-0.5 text-amber-800">{dbFetchError}</p>
               <p className="mt-1 text-[11px] text-amber-700">
-                Tip: Ensure your Supabase project table has a SELECT policy allowing authenticated or anon users to read from <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">Airwireless</code>.
+                Tip: Ensure your Supabase project table has SELECT, UPDATE, and DELETE policies active for <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">authenticated</code> users on <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">Airwireless</code>.
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK ACTION BAR (Appears above the table when at least 1 lead is selected) */}
+      {selectedIds.length > 0 && (
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 rounded-2xl border-2 border-emerald-500/40 bg-[#0B2B20] text-white p-4 shadow-md animate-fade-in">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center justify-center rounded-xl bg-emerald-400 text-[#061E14] font-black text-xs px-3 py-1">
+              {selectedIds.length} {selectedIds.length === 1 ? 'lead' : 'leads'} selected
+            </span>
+            {onClearSelection && (
+              <button
+                type="button"
+                onClick={onClearSelection}
+                disabled={isBulkProcessing}
+                className="text-xs font-semibold text-emerald-200 hover:text-white underline underline-offset-2 cursor-pointer disabled:opacity-50"
+              >
+                Clear selection
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
+            {/* Bulk Assign Dropdown + Assign Selected Button */}
+            <div className="flex items-center gap-2 bg-[#061A13] border border-emerald-400/30 rounded-xl p-1">
+              <UserPlus className="h-3.5 w-3.5 text-emerald-400 ml-2 shrink-0" />
+              <select
+                value={bulkSelectedRep}
+                onChange={(e) => setBulkSelectedRep(e.target.value)}
+                disabled={isBulkProcessing}
+                className="bg-transparent text-xs font-bold text-white outline-none cursor-pointer px-1 py-1 min-w-[160px]"
+                aria-label="Select sales rep for bulk assignment"
+              >
+                <option value="" className="text-slate-800">
+                  Select Sales Rep...
+                </option>
+                <option value="Unassigned" className="text-slate-900">
+                  Unassigned
+                </option>
+                {staffMembers.map((s) => (
+                  <option key={s.id} value={s.name} className="text-slate-900">
+                    {s.name} ({s.commissionMultiplier}x)
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={handleBulkAssignClick}
+                disabled={!bulkSelectedRep || isBulkProcessing}
+                className="rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-emerald-800/60 disabled:text-emerald-300/50 text-[#061E14] px-3 py-1.5 text-xs font-extrabold transition-colors cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {isBulkProcessing ? 'Processing...' : 'Assign Selected'}
+              </button>
+            </div>
+
+            {/* Red Delete Selected Button */}
+            <button
+              type="button"
+              onClick={onBulkDelete}
+              disabled={isBulkProcessing}
+              className="flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 disabled:opacity-60 px-3.5 py-2 text-xs font-extrabold text-white transition-colors shadow-xs cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isBulkProcessing ? 'Deleting...' : 'Delete Selected'}</span>
+            </button>
           </div>
         </div>
       )}
@@ -166,6 +295,16 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100/70 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                  <th className="py-3 pl-4 pr-2 w-10">
+                    <input
+                      ref={selectAllCheckboxRef}
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={() => onToggleSelectAll(visibleLeadIds)}
+                      aria-label="Select all leads"
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer accent-emerald-700"
+                    />
+                  </th>
                   <th className="py-3 px-4">Customer Name & ID</th>
                   <th className="py-3 px-4">Contact Info</th>
                   <th className="py-3 px-4">Requested Plan</th>
@@ -178,13 +317,32 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {leads.map((lead) => {
                   const followUp = lead.leadFollowUpStatus || 'new';
+                  const isSelected = selectedIds.includes(lead.id);
 
                   return (
                     <tr
                       key={lead.id}
                       onClick={() => onOpenCustomer(lead)}
-                      className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                      className={`transition-colors cursor-pointer group ${
+                        isSelected
+                          ? 'bg-emerald-50/80 hover:bg-emerald-50'
+                          : 'hover:bg-slate-50/80'
+                      }`}
                     >
+                      {/* Far-left Row Selection Checkbox */}
+                      <td
+                        className="py-3.5 pl-4 pr-2 w-10"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => onToggleSelect(lead.id)}
+                          aria-label={`Select ${lead.fullName}`}
+                          className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer accent-emerald-700"
+                        />
+                      </td>
+
                       {/* Name & ID */}
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-900 group-hover:text-emerald-800 transition-colors">

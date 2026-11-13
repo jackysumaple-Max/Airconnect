@@ -118,8 +118,8 @@ export interface CustomerRecord {
 }
 
 export interface MonthlyCohortSummary {
-  cohortMonth: string; // e.g. "2026-10"
-  cohortName: string; // e.g. "October 2026"
+  cohortMonth: string; // e.g. "2026-11"
+  cohortName: string; // e.g. "November 2026"
   totalActivationsInMonth: number;
   tier: 'Tier 1 (7%)' | 'Tier 2 (9%)';
   lockedResidualRate: number; // 0.07 or 0.09
@@ -127,6 +127,8 @@ export interface MonthlyCohortSummary {
   totalMonthlyBilling: number;
   monthlyResidualPayout: number;
   isCurrentMonth: boolean;
+  isOverridden?: boolean;
+  updatedAt?: string;
 }
 
 export interface CMSConfig {

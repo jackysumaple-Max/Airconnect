@@ -91,10 +91,11 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   >('leads');
   
   // Standardized Date Range Selector State for Leads, Active Lines, Non-Active Lines
+  const currentCalendarMonth = new Date().toISOString().substring(0, 7);
   const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>('all');
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-11');
-  const [customStartMonth, setCustomStartMonth] = useState<string>('2026-08');
-  const [customEndMonth, setCustomEndMonth] = useState<string>('2026-11');
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentCalendarMonth);
+  const [customStartMonth, setCustomStartMonth] = useState<string>(currentCalendarMonth);
+  const [customEndMonth, setCustomEndMonth] = useState<string>(currentCalendarMonth);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -111,6 +112,11 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [dbFetchError, setDbFetchError] = useState<string | null>(null);
 
+  // Bulk Row Selection & Action State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isBulkProcessing, setIsBulkProcessing] = useState<boolean>(false);
+  const [bulkActionNotice, setBulkActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   // Force Live Fetch: Ensure the component mounts and immediately runs await supabase.from('Airwireless').select('*')
   // Strictly NO .eq('user_id', ...) or device-specific filters!
   const fetchLiveLeads = useCallback(async () => {
@@ -118,7 +124,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
     try {
       let res = await supabase.from('Airwireless').select('*');
-      if (res.error && (res.error.code === '42P01' || res.error.message?.includes('does not exist'))) {
+      if (res.error && (res.error.code === '42P01' || res.error.code === 'PGRST205' || res.error.message?.includes('does not exist'))) {
         res = await supabase.from('airwireless').select('*');
       }
       if (res.error) {
@@ -129,8 +135,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
       if (res.data) {
         const mapped: CustomerRecord[] = res.data.map((item: any) => ({
-          id: item.id ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
-          status: 'lead',
+          id: item.id !== undefined && item.id !== null ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
+          status: (item.status as CustomerStatus) || 'lead',
           firstName: item.first_name || item.firstName || item.name?.split(' ')[0] || '',
           lastName: item.last_name || item.lastName || item.name?.split(' ').slice(1).join(' ') || '',
           fullName: item.full_name || item.fullName || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'Website Customer',
@@ -139,12 +145,19 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           preferredPlanId: item.preferred_plan_id || item.preferredPlanId || 'ctexcel-27-50gb',
           preferredPlanName: item.preferred_plan_name || item.preferredPlanName || item.plan || '$27 / 50GB 5G Plan',
           monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 27),
-          salesRep: item.sales_rep || item.salesRep || 'Unassigned',
+          salesRep: item.assigned_specialist || item.sales_rep || item.salesRep || 'Unassigned',
           referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
           submittedAt: item.submitted_at || item.created_at || new Date().toISOString(),
+          activationStartDate:
+            item.activation_start_date ||
+            item.activationStartDate ||
+            (item.status === 'active_line' ? (item.submitted_at || item.created_at) : undefined),
           callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
           notes: item.notes || '',
           leadFollowUpStatus: (item.lead_follow_up_status as LeadFollowUpStatus) || (item.leadFollowUpStatus as LeadFollowUpStatus) || 'new',
+          isDeleted: Boolean(item.is_deleted),
+          deletedAt: item.deleted_at,
+          deletedBy: item.deleted_by,
           idVerification: {
             status: item.id_verification_status || 'unverified',
           },
@@ -180,21 +193,30 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     fetchLiveLeads();
   }, [fetchLiveLeads]);
 
-  // Available months dynamically extracted from customer records
+  // Combined real database records (Supabase Airwireless + synced local state)
+  const mergedDatabaseCustomers = useMemo(() => {
+    if (!liveDbLeads) return customers;
+    const byId = new Map<string, CustomerRecord>();
+    customers.forEach((c) => byId.set(c.id, c));
+    liveDbLeads.forEach((dbRow) => {
+      const existing = byId.get(dbRow.id);
+      byId.set(dbRow.id, existing ? { ...existing, ...dbRow } : dbRow);
+    });
+    return Array.from(byId.values());
+  }, [customers, liveDbLeads]);
+
+  // Available months dynamically extracted from real customer records
   const availableMonths = useMemo(() => {
     const monthSet = new Set<string>();
-    monthSet.add('2026-11');
-    monthSet.add('2026-10');
-    monthSet.add('2026-09');
-    monthSet.add('2026-08');
-    customers.forEach((c) => {
+    monthSet.add(new Date().toISOString().substring(0, 7));
+    mergedDatabaseCustomers.forEach((c) => {
       const d = c.submittedAt || c.activationStartDate || c.deactivationDate || c.commission?.payoutDate;
       if (d && d.length >= 7) {
         monthSet.add(d.substring(0, 7));
       }
     });
     return Array.from(monthSet).sort().reverse();
-  }, [customers]);
+  }, [mergedDatabaseCustomers]);
 
   // Stop using LocalStorage for Admin Data:
   // Only display what is returned from the Supabase fetch. Do NOT fall back to LocalStorage or local state appends.
@@ -204,16 +226,16 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   }, [liveDbLeads]);
 
   const activeLines = useMemo(() => {
-    return customers.filter(
+    return mergedDatabaseCustomers.filter(
       (c) => !c.isDeleted && c.status === 'active_line' && canStaffViewActiveLine(currentStaff, c.salesRep)
     );
-  }, [customers, currentStaff]);
+  }, [mergedDatabaseCustomers, currentStaff]);
 
   const nonActiveLines = useMemo(() => {
-    return customers.filter(
+    return mergedDatabaseCustomers.filter(
       (c) => !c.isDeleted && c.status === 'non_active_line' && canStaffViewNonActiveLine(currentStaff, c.salesRep)
     );
-  }, [customers, currentStaff]);
+  }, [mergedDatabaseCustomers, currentStaff]);
 
   const rbacAccessibleCustomers = useMemo(() => {
     return customers.filter(
@@ -349,21 +371,208 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     searchQuery,
   ]);
 
-  // Handle Lead Assignment by Admin from Master Unassigned Pool
-  const handleAssignLead = (leadId: string, repName: string) => {
+  // Row Selection Helpers
+  const handleToggleSelectLead = useCallback((id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }, []);
+
+  const handleToggleSelectAllLeads = useCallback((visibleLeadIds: string[]) => {
+    setSelectedIds((prev) => {
+      const allSelected =
+        visibleLeadIds.length > 0 && visibleLeadIds.every((id) => prev.includes(id));
+      return allSelected ? [] : visibleLeadIds;
+    });
+  }, []);
+
+  // Helper to update Airwireless table using assigned_specialist (with sales_rep schema fallback)
+  const updateAirwirelessAssign = async (ids: string[], repName: string) => {
+    let res = await supabase
+      .from('Airwireless')
+      .update({ assigned_specialist: repName })
+      .in('id', ids);
+
+    if (
+      res.error &&
+      (res.error.code === '42703' ||
+        res.error.code === 'PGRST204' ||
+        res.error.message?.includes('assigned_specialist'))
+    ) {
+      res = await supabase
+        .from('Airwireless')
+        .update({ sales_rep: repName })
+        .in('id', ids);
+    }
+
+    if (
+      res.error &&
+      (res.error.code === '42P01' ||
+        res.error.code === 'PGRST205' ||
+        res.error.message?.includes('does not exist'))
+    ) {
+      res = await supabase
+        .from('airwireless')
+        .update({ assigned_specialist: repName })
+        .in('id', ids);
+      if (
+        res.error &&
+        (res.error.code === '42703' ||
+          res.error.code === 'PGRST204' ||
+          res.error.message?.includes('assigned_specialist'))
+      ) {
+        res = await supabase
+          .from('airwireless')
+          .update({ sales_rep: repName })
+          .in('id', ids);
+      }
+    }
+
+    return res;
+  };
+
+  // Bulk Delete Selected Leads
+  const handleBulkDeleteLeads = async () => {
+    if (selectedIds.length === 0) return;
+
+    const count = selectedIds.length;
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${count} lead${count === 1 ? '' : 's'}?`
+    );
+    if (!confirmed) return;
+
+    setIsBulkProcessing(true);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    try {
+      let res = await supabase.from('Airwireless').delete().in('id', selectedIds);
+      if (
+        res.error &&
+        (res.error.code === '42P01' ||
+          res.error.code === 'PGRST205' ||
+          res.error.message?.includes('does not exist'))
+      ) {
+        res = await supabase.from('airwireless').delete().in('id', selectedIds);
+      }
+
+      if (res.error) {
+        console.error('Supabase bulk delete error on Airwireless:', res.error);
+        const msg = res.error.message || 'Failed to delete selected leads from Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+        return;
+      }
+
+      await fetchLiveLeads();
+      setSelectedIds([]);
+      setBulkActionNotice({
+        type: 'success',
+        message: `Successfully deleted ${count} lead${count === 1 ? '' : 's'} from Airwireless.`,
+      });
+    } catch (err: any) {
+      console.error('Exception during bulk delete:', err);
+      const msg = err?.message || 'Unexpected error deleting leads.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Bulk Assign Selected Leads
+  const handleBulkAssignLeads = async (selectedRep: string) => {
+    if (selectedIds.length === 0 || !selectedRep) return;
+
+    const count = selectedIds.length;
+    setIsBulkProcessing(true);
+    setBulkActionNotice(null);
+    setDbFetchError(null);
+
+    try {
+      const res = await updateAirwirelessAssign(selectedIds, selectedRep);
+
+      if (res.error) {
+        console.error('Supabase bulk assign error on Airwireless:', res.error);
+        const msg = res.error.message || 'Failed to assign selected leads in Supabase.';
+        setDbFetchError(msg);
+        setBulkActionNotice({ type: 'error', message: `Assign failed: ${msg}` });
+        return;
+      }
+
+      await fetchLiveLeads();
+      setSelectedIds([]);
+      setBulkActionNotice({
+        type: 'success',
+        message: `Assigned ${count} lead${count === 1 ? '' : 's'} to ${selectedRep}.`,
+      });
+    } catch (err: any) {
+      console.error('Exception during bulk assign:', err);
+      const msg = err?.message || 'Unexpected error assigning leads.';
+      setDbFetchError(msg);
+      setBulkActionNotice({ type: 'error', message: `Assign failed: ${msg}` });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Handle Lead Assignment by Admin (Single row -> Supabase + refresh)
+  const handleAssignLead = async (leadId: string, repName: string) => {
+    setBulkActionNotice(null);
     const updated = TelecomStorage.assignLead(leadId, repName, currentStaff.name);
     if (updated) {
       onSaveCustomer(leadId, updated);
     }
+
+    const res = await updateAirwirelessAssign([leadId], repName);
+    if (res.error) {
+      console.error('Supabase single lead assign error:', res.error);
+      setDbFetchError(res.error.message || 'Failed to update assigned specialist in Supabase.');
+      setBulkActionNotice({
+        type: 'error',
+        message: `Assign failed: ${res.error.message}`,
+      });
+      return;
+    }
+
+    await fetchLiveLeads();
+    setSelectedIds([]);
   };
 
-  // Handle Quick Status Update for Leads
-  const handleUpdateLeadStatus = (id: string, newStatus: LeadFollowUpStatus) => {
+  // Handle Quick Status Update for Leads (Single row -> Supabase + refresh)
+  const handleUpdateLeadStatus = async (id: string, newStatus: LeadFollowUpStatus) => {
+    setBulkActionNotice(null);
     onSaveCustomer(id, { leadFollowUpStatus: newStatus });
+
+    let res = await supabase
+      .from('Airwireless')
+      .update({ lead_follow_up_status: newStatus })
+      .eq('id', id);
+
+    if (
+      res.error &&
+      (res.error.code === '42P01' ||
+        res.error.code === 'PGRST205' ||
+        res.error.message?.includes('does not exist'))
+    ) {
+      res = await supabase
+        .from('airwireless')
+        .update({ lead_follow_up_status: newStatus })
+        .eq('id', id);
+    }
+
+    if (res.error) {
+      console.error('Supabase lead status update error:', res.error);
+      setDbFetchError(res.error.message || 'Failed to update lead status in Supabase.');
+      return;
+    }
+
+    await fetchLiveLeads();
+    setSelectedIds([]);
   };
 
   // Handle Quick Activate from Lead to Active Line
-  const handleQuickActivate = (lead: CustomerRecord) => {
+  const handleQuickActivate = async (lead: CustomerRecord) => {
     const today = new Date().toISOString().split('T')[0];
     const rep = staffMembers.find((s) => s.name === lead.salesRep);
     const multiplier = rep ? rep.commissionMultiplier : (lead.commission?.multiplierUsed || 1.0);
@@ -391,6 +600,91 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       notes: `${lead.notes || ''}\n[Activated on ${today} by ${currentStaff.name} with locked ${multiplier}x multiplier]`,
     };
     onSaveCustomer(lead.id, updates);
+
+    const actRes = await supabase
+      .from('Airwireless')
+      .update({ status: 'active_line', activation_start_date: today })
+      .eq('id', lead.id);
+    if (actRes.error && (actRes.error.code === '42703' || actRes.error.code === 'PGRST204' || actRes.error.message?.includes('activation_start_date'))) {
+      await supabase
+        .from('Airwireless')
+        .update({ status: 'active_line' })
+        .eq('id', lead.id);
+    }
+
+    await fetchLiveLeads();
+    setSelectedIds([]);
+  };
+
+  // Wrapper for saving customer profile edits with automatic Supabase lead sync & refresh
+  const handleModalSaveCustomer = async (id: string, updates: Partial<CustomerRecord>) => {
+    onSaveCustomer(id, updates);
+
+    const leadPayload: Record<string, any> = {};
+    if (updates.firstName !== undefined) leadPayload.first_name = updates.firstName;
+    if (updates.lastName !== undefined) leadPayload.last_name = updates.lastName;
+    if (updates.fullName !== undefined) leadPayload.full_name = updates.fullName;
+    if (updates.email !== undefined) leadPayload.email = updates.email;
+    if (updates.phone !== undefined) leadPayload.phone = updates.phone;
+    if (updates.preferredPlanName !== undefined) leadPayload.preferred_plan_name = updates.preferredPlanName;
+    if (updates.preferredPlanId !== undefined) leadPayload.preferred_plan_id = updates.preferredPlanId;
+    if (updates.notes !== undefined) leadPayload.notes = updates.notes;
+    if (updates.status !== undefined) leadPayload.status = updates.status;
+    if (updates.activationStartDate !== undefined) leadPayload.activation_start_date = updates.activationStartDate;
+
+    if (updates.salesRep !== undefined) {
+      await updateAirwirelessAssign([id], updates.salesRep);
+    }
+
+    if (Object.keys(leadPayload).length > 0) {
+      const saveRes = await supabase.from('Airwireless').update(leadPayload).eq('id', id);
+      if (
+        saveRes.error &&
+        leadPayload.activation_start_date !== undefined &&
+        (saveRes.error.code === '42703' || saveRes.error.code === 'PGRST204' || saveRes.error.message?.includes('activation_start_date'))
+      ) {
+        const { activation_start_date: _ignored, ...restPayload } = leadPayload;
+        if (Object.keys(restPayload).length > 0) {
+          await supabase.from('Airwireless').update(restPayload).eq('id', id);
+        }
+      }
+    }
+
+    await fetchLiveLeads();
+    setSelectedIds([]);
+  };
+
+  // Wrapper for deleting customer/lead from profile modal with automatic Supabase sync & refresh
+  const handleModalDeleteCustomer = async (id: string) => {
+    onDeleteCustomer(id);
+    await supabase.from('Airwireless').delete().eq('id', id);
+    await fetchLiveLeads();
+    setSelectedIds([]);
+  };
+
+  // Wrapper for adding a manual lead with automatic refresh
+  const handleModalAddCustomer = async (customer: CustomerRecord) => {
+    onAddCustomer(customer);
+    if (customer.status === 'lead') {
+      await supabase.from('Airwireless').insert([
+        {
+          first_name: customer.firstName,
+          last_name: customer.lastName,
+          full_name: customer.fullName,
+          email: customer.email,
+          phone: customer.phone,
+          preferred_plan_id: customer.preferredPlanId,
+          preferred_plan_name: customer.preferredPlanName,
+          monthly_plan_price: customer.monthlyPlanPrice,
+          assigned_specialist: customer.salesRep || 'Unassigned',
+          referral_source: customer.referralSource || 'Manual CRM Entry',
+          status: 'lead',
+          notes: customer.notes || '',
+        },
+      ]);
+      await fetchLiveLeads();
+      setSelectedIds([]);
+    }
   };
 
   // Handle Commission toggle from Clawback Tracker
@@ -766,6 +1060,15 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             isRefreshing={isRefreshingLeads}
             lastRefreshedAt={lastRefreshedAt}
             dbFetchError={dbFetchError}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelectLead}
+            onToggleSelectAll={handleToggleSelectAllLeads}
+            onClearSelection={() => setSelectedIds([])}
+            onBulkDelete={handleBulkDeleteLeads}
+            onBulkAssign={handleBulkAssignLeads}
+            isBulkProcessing={isBulkProcessing}
+            bulkActionNotice={bulkActionNotice}
+            onDismissNotice={() => setBulkActionNotice(null)}
           />
         )}
 
@@ -789,8 +1092,10 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
         {activeTab === 'residuals' && isMasterAdmin && (
           <ResidualEngine
-            customers={customers}
-            onRefreshData={() => {}}
+            customers={mergedDatabaseCustomers}
+            isMasterAdmin={isMasterAdmin}
+            currentStaffName={currentStaff.name}
+            onRefreshData={fetchLiveLeads}
           />
         )}
 
@@ -846,8 +1151,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           isOpen={Boolean(selectedCustomer)}
           isMasterAdmin={isMasterAdmin}
           onClose={() => setSelectedCustomer(null)}
-          onSave={onSaveCustomer}
-          onDelete={onDeleteCustomer}
+          onSave={handleModalSaveCustomer}
+          onDelete={handleModalDeleteCustomer}
         />
       )}
 
@@ -858,7 +1163,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           staffMembers={staffMembers}
           isOpen={isNewModalOpen}
           onClose={() => setIsNewModalOpen(false)}
-          onAdd={onAddCustomer}
+          onAdd={handleModalAddCustomer}
         />
       )}
 

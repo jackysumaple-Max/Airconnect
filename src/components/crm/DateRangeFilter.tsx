@@ -27,7 +27,7 @@ export const DateRangeFilter: React.FC<DateRangeFilterProps> = ({
   onCustomStartChange,
   customEndMonth,
   onCustomEndChange,
-  availableMonths = ['2026-11', '2026-10', '2026-09', '2026-08'],
+  availableMonths = [new Date().toISOString().substring(0, 7)],
   totalRecordsCount,
   filteredCount,
   label = 'Database Records',

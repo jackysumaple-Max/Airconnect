@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS public."Airwireless" (
     plan TEXT,
     monthly_plan_price NUMERIC DEFAULT 30,
     sales_rep TEXT DEFAULT 'Unassigned',
+    assigned_specialist TEXT DEFAULT 'Unassigned',
     referral_source TEXT DEFAULT 'Website Lead Capture',
     callback_time_preference TEXT DEFAULT 'As soon as possible',
     status TEXT DEFAULT 'lead',
@@ -29,6 +30,9 @@ CREATE TABLE IF NOT EXISTS public."Airwireless" (
     deleted_at TIMESTAMPTZ,
     deleted_by TEXT
 );
+
+ALTER TABLE public."Airwireless" ADD COLUMN IF NOT EXISTS assigned_specialist TEXT DEFAULT 'Unassigned';
+ALTER TABLE public."Airwireless" ADD COLUMN IF NOT EXISTS activation_start_date TEXT;
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public."Airwireless" TO anon, authenticated, service_role;
@@ -45,6 +49,18 @@ DROP POLICY IF EXISTS "Allow staff to select leads" ON public."Airwireless";
 CREATE POLICY "Allow staff to select leads" ON public."Airwireless"
     FOR SELECT 
     TO anon, authenticated, public
+    USING (true);
+
+DROP POLICY IF EXISTS "Allow Admin Update" ON public."Airwireless";
+CREATE POLICY "Allow Admin Update" ON public."Airwireless"
+    FOR UPDATE
+    TO authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Allow Admin Delete" ON public."Airwireless";
+CREATE POLICY "Allow Admin Delete" ON public."Airwireless"
+    FOR DELETE
+    TO authenticated
     USING (true);
 
 -- Fallback table: public.leads
@@ -131,6 +147,9 @@ CREATE TABLE IF NOT EXISTS public.site_settings (
     hero_box_2_sub TEXT DEFAULT 'Included Free',
     hero_box_3_title TEXT DEFAULT '9 Nations',
     hero_box_3_sub TEXT DEFAULT 'Unlimited Talk',
+    -- Top Promotional Announcement Banner
+    top_promo_banner_text TEXT DEFAULT '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!',
+    announcement_active BOOLEAN DEFAULT true,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -149,13 +168,16 @@ ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_2_title TEXT 
 ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_2_sub TEXT DEFAULT 'Included Free';
 ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_3_title TEXT DEFAULT '9 Nations';
 ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS hero_box_3_sub TEXT DEFAULT 'Unlimited Talk';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS top_promo_banner_text TEXT DEFAULT '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!';
+ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS announcement_active BOOLEAN DEFAULT true;
 
 -- Insert or update singleton row with streamlined copy
 INSERT INTO public.site_settings (
     id, hero_title, hero_subtitle, hero_image, hero_badge, hero_promo_price, hero_promo_data,
     hero_feature_1, hero_feature_2, hero_feature_3, hero_feature_4,
     hero_card_tag, hero_card_title, hero_card_price, hero_card_subtitle,
-    hero_box_1_title, hero_box_1_sub, hero_box_2_title, hero_box_2_sub, hero_box_3_title, hero_box_3_sub
+    hero_box_1_title, hero_box_1_sub, hero_box_2_title, hero_box_2_sub, hero_box_3_title, hero_box_3_sub,
+    top_promo_banner_text, announcement_active
 )
 VALUES (
     1,
@@ -178,11 +200,14 @@ VALUES (
     'China #',
     'Included Free',
     '9 Nations',
-    'Unlimited Talk'
+    'Unlimited Talk',
+    '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!',
+    true
 )
 ON CONFLICT (id) DO UPDATE SET
     hero_title = EXCLUDED.hero_title,
-    hero_subtitle = EXCLUDED.hero_subtitle;
+    hero_subtitle = EXCLUDED.hero_subtitle,
+    top_promo_banner_text = COALESCE(public.site_settings.top_promo_banner_text, EXCLUDED.top_promo_banner_text);
 
 GRANT ALL ON TABLE public.site_settings TO anon, authenticated, service_role;
 ALTER TABLE public.site_settings ENABLE ROW LEVEL SECURITY;
@@ -263,7 +288,38 @@ CREATE POLICY "Allow staff full access" ON public.staff
     WITH CHECK (true);
 
 
--- 5. SUPABASE STORAGE BUCKET: BANNERS (For Hero Banner file uploads)
+-- 5. MONTHLY COHORTS TABLE (Production Residual & Master Admin Overrides)
+CREATE TABLE IF NOT EXISTS public.monthly_cohorts (
+    cohort_month TEXT PRIMARY KEY,
+    cohort_name TEXT,
+    monthly_activations INT NOT NULL DEFAULT 0,
+    active_subscribers INT NOT NULL DEFAULT 0,
+    total_monthly_billing NUMERIC NOT NULL DEFAULT 0,
+    locked_residual_rate NUMERIC NOT NULL DEFAULT 0.07,
+    tier_label TEXT DEFAULT 'Tier 1 (7%)',
+    is_overridden BOOLEAN DEFAULT true,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+GRANT ALL ON TABLE public.monthly_cohorts TO anon, authenticated, service_role;
+ALTER TABLE public.monthly_cohorts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public read monthly_cohorts" ON public.monthly_cohorts;
+CREATE POLICY "Allow public read monthly_cohorts" ON public.monthly_cohorts
+    FOR SELECT
+    TO anon, authenticated, public
+    USING (true);
+
+DROP POLICY IF EXISTS "Allow admin write monthly_cohorts" ON public.monthly_cohorts;
+CREATE POLICY "Allow admin write monthly_cohorts" ON public.monthly_cohorts
+    FOR ALL
+    TO anon, authenticated, public
+    USING (true)
+    WITH CHECK (true);
+
+
+-- 6. SUPABASE STORAGE BUCKET: BANNERS (For Hero Banner file uploads)
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('banners', 'banners', true)
 ON CONFLICT (id) DO NOTHING;

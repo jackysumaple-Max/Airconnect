@@ -95,6 +95,14 @@ export default function App() {
             heroBadge: data.heroBadge || prev.heroBadge,
             heroPromoPrice: data.heroPromoPrice || prev.heroPromoPrice,
             heroPromoData: data.heroPromoData || prev.heroPromoData,
+            announcementBarText:
+              data.announcementBarText !== undefined && data.announcementBarText !== null
+                ? data.announcementBarText
+                : prev.announcementBarText,
+            announcementActive:
+              data.announcementActive !== undefined && data.announcementActive !== null
+                ? Boolean(data.announcementActive)
+                : prev.announcementActive,
             heroFeature1: data.heroFeature1 || prev.heroFeature1,
             heroFeature2: data.heroFeature2 || prev.heroFeature2,
             heroFeature3: data.heroFeature3 || prev.heroFeature3,
@@ -366,12 +374,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F8FAF9] text-slate-900 font-sans antialiased flex flex-col selection:bg-emerald-200 selection:text-emerald-900">
       
-      {/* Announcement Bar (CMS Managed) */}
-      {cms.announcementActive && cms.announcementBarText && (
+      {/* Top Promotional Announcement Banner (CMS Managed via site_settings.top_promo_banner_text) */}
+      {cms.announcementActive && (
         <aside aria-label="Promotion" className="bg-[#08281D] border-b border-emerald-900/50 py-2 px-4 text-center text-xs font-semibold text-emerald-200">
           <div className="mx-auto max-w-7xl flex items-center justify-center gap-2">
             <Sparkles className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-            <span className="truncate">{cms.announcementBarText}</span>
+            <span className="truncate">
+              {cms.announcementBarText?.trim() ||
+                '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'}
+            </span>
           </div>
         </aside>
       )}

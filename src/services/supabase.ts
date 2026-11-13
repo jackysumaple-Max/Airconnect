@@ -425,8 +425,8 @@ export async function fetchLeadsFromSupabase(): Promise<{ data: CustomerRecord[]
       if (res.data) {
         // Format raw database records into CustomerRecord structure
         const mapped: CustomerRecord[] = res.data.map((item: any) => ({
-          id: item.id ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
-          status: 'lead',
+          id: item.id !== undefined && item.id !== null ? String(item.id) : `LEAD-${Math.floor(1000 + Math.random() * 9000)}`,
+          status: (item.status as CustomerRecord['status']) || 'lead',
           firstName: item.first_name || item.firstName || item.name?.split(' ')[0] || '',
           lastName: item.last_name || item.lastName || item.name?.split(' ').slice(1).join(' ') || '',
           fullName: item.full_name || item.fullName || item.name || `${item.first_name || ''} ${item.last_name || ''}`.trim(),
@@ -435,12 +435,19 @@ export async function fetchLeadsFromSupabase(): Promise<{ data: CustomerRecord[]
           preferredPlanId: item.preferred_plan_id || item.preferredPlanId || '',
           preferredPlanName: item.preferred_plan_name || item.preferredPlanName || item.plan || 'CTExcel Plan',
           monthlyPlanPrice: Number(item.monthly_plan_price || item.monthlyPlanPrice || 30),
-          salesRep: item.sales_rep || item.salesRep || 'Unassigned',
+          salesRep: item.assigned_specialist || item.sales_rep || item.salesRep || 'Unassigned',
           referralSource: item.referral_source || item.referralSource || 'Website Lead Capture',
           submittedAt: item.submitted_at || item.created_at || new Date().toISOString(),
+          activationStartDate:
+            item.activation_start_date ||
+            item.activationStartDate ||
+            (item.status === 'active_line' ? (item.submitted_at || item.created_at) : undefined),
           callbackTimePreference: item.callback_time_preference || item.callbackTimePreference || 'As soon as possible',
           notes: item.notes || '',
           leadFollowUpStatus: item.lead_follow_up_status || item.leadFollowUpStatus || 'new',
+          isDeleted: Boolean(item.is_deleted),
+          deletedAt: item.deleted_at,
+          deletedBy: item.deleted_by,
           idVerification: {
             status: item.id_verification_status || 'unverified',
           },
@@ -685,6 +692,8 @@ export async function saveSiteSettingsToSupabase(settings: {
   heroBadge?: string;
   heroPromoPrice?: string;
   heroPromoData?: string;
+  announcementBarText?: string;
+  announcementActive?: boolean;
   // Feature 2: Left Column Checkmark List
   heroFeature1?: string;
   heroFeature2?: string;
@@ -706,7 +715,7 @@ export async function saveSiteSettingsToSupabase(settings: {
     return { success: true, error: null };
   }
 
-  const payload: Record<string, any> = {
+  const basePayload: Record<string, any> = {
     id: 1, // Single-row config table
     hero_title: settings.heroTitle,
     hero_subtitle: settings.heroSubtitle,
@@ -731,11 +740,32 @@ export async function saveSiteSettingsToSupabase(settings: {
     updated_at: new Date().toISOString(),
   };
 
+  const fullPayload: Record<string, any> = {
+    ...basePayload,
+    top_promo_banner_text: settings.announcementBarText,
+    announcement_active: settings.announcementActive,
+  };
+
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('site_settings')
-      .upsert(payload, { onConflict: 'id' })
+      .upsert(fullPayload, { onConflict: 'id' })
       .select();
+
+    // If top_promo_banner_text or announcement_active column doesn't exist yet on Supabase, retry base payload
+    if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('top_promo_banner_text') || error.message?.includes('announcement_active'))) {
+      console.warn('site_settings missing top_promo_banner_text/announcement_active columns; saving remaining hero settings:', error.message);
+      const retry = await supabase
+        .from('site_settings')
+        .upsert(basePayload, { onConflict: 'id' })
+        .select();
+      return {
+        success: !retry.error,
+        data: retry.data,
+        error: retry.error,
+        warning: `Run SQL in Supabase to persist banner across devices: ALTER TABLE public.site_settings ADD COLUMN IF NOT EXISTS top_promo_banner_text TEXT, ADD COLUMN IF NOT EXISTS announcement_active BOOLEAN DEFAULT true;`,
+      };
+    }
 
     if (error) {
       console.warn('Supabase site_settings table update note:', error.message);
@@ -749,7 +779,7 @@ export async function saveSiteSettingsToSupabase(settings: {
 }
 
 /**
- * Fetches site settings (Hero headline, subtext, image, features, card texts) from Supabase.
+ * Fetches site settings (Hero headline, subtext, image, features, card texts, top promo banner) from Supabase.
  */
 export async function fetchSiteSettingsFromSupabase() {
   if (!isSupabaseConfigured) return { data: null, error: null };
@@ -768,6 +798,8 @@ export async function fetchSiteSettingsFromSupabase() {
         heroBadge: data.hero_badge,
         heroPromoPrice: data.hero_promo_price,
         heroPromoData: data.hero_promo_data,
+        announcementBarText: data.top_promo_banner_text ?? data.announcement_bar_text ?? data.announcementBarText,
+        announcementActive: data.announcement_active ?? data.announcementActive,
         heroFeature1: data.hero_feature_1,
         heroFeature2: data.hero_feature_2,
         heroFeature3: data.hero_feature_3,
@@ -1065,5 +1097,122 @@ export function subscribeToLeadsRealtime(
   } catch (err) {
     console.error('Failed to initialize Realtime subscription on leads:', err);
     return () => {};
+  }
+}
+
+/**
+ * 8. MONTHLY COHORTS OVERRIDES (Production Residual Engine):
+ * Fetches and persists Master Admin cohort overrides in the 'monthly_cohorts' Supabase table.
+ */
+export interface MonthlyCohortOverrideRecord {
+  cohort_month: string;
+  cohort_name?: string;
+  monthly_activations: number;
+  active_subscribers: number;
+  total_monthly_billing: number;
+  locked_residual_rate?: number;
+  tier_label?: string;
+  is_overridden?: boolean;
+  updated_by?: string;
+  updated_at?: string;
+}
+
+export async function fetchMonthlyCohortsFromSupabase(): Promise<{
+  data: MonthlyCohortOverrideRecord[];
+  error: any;
+  missingTable?: boolean;
+}> {
+  if (!isSupabaseConfigured) {
+    return { data: [], error: null };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('monthly_cohorts')
+      .select('*')
+      .order('cohort_month', { ascending: false });
+
+    if (error) {
+      const missingTable =
+        error.code === '42P01' ||
+        error.code === 'PGRST205' ||
+        error.message?.includes('does not exist') ||
+        error.message?.includes('Could not find the table');
+      if (!missingTable) {
+        console.warn('Supabase monthly_cohorts fetch note:', error.message);
+      }
+      return { data: [], error, missingTable };
+    }
+
+    const normalized: MonthlyCohortOverrideRecord[] = (data || []).map((row: any) => ({
+      cohort_month: String(row.cohort_month),
+      cohort_name: row.cohort_name || undefined,
+      monthly_activations: Number(row.monthly_activations ?? 0),
+      active_subscribers: Number(row.active_subscribers ?? 0),
+      total_monthly_billing: Number(row.total_monthly_billing ?? 0),
+      locked_residual_rate: row.locked_residual_rate !== undefined ? Number(row.locked_residual_rate) : undefined,
+      tier_label: row.tier_label || undefined,
+      is_overridden: row.is_overridden ?? true,
+      updated_by: row.updated_by || undefined,
+      updated_at: row.updated_at || undefined,
+    }));
+
+    return { data: normalized, error: null };
+  } catch (err: any) {
+    return { data: [], error: err };
+  }
+}
+
+export async function upsertMonthlyCohortOverrideInSupabase(record: {
+  cohortMonth: string;
+  cohortName: string;
+  monthlyActivations: number;
+  activeSubscribers: number;
+  totalMonthlyBilling: number;
+  updatedBy?: string;
+}): Promise<{
+  data: MonthlyCohortOverrideRecord | null;
+  error: any;
+  missingTable?: boolean;
+}> {
+  const rate = record.monthlyActivations >= 200 ? 0.09 : 0.07;
+  const tierLabel = record.monthlyActivations >= 200 ? 'Tier 2 (9%)' : 'Tier 1 (7%)';
+
+  const payload: MonthlyCohortOverrideRecord = {
+    cohort_month: record.cohortMonth,
+    cohort_name: record.cohortName,
+    monthly_activations: Math.max(0, Math.round(record.monthlyActivations)),
+    active_subscribers: Math.max(0, Math.round(record.activeSubscribers)),
+    total_monthly_billing: Number(Math.max(0, record.totalMonthlyBilling).toFixed(2)),
+    locked_residual_rate: rate,
+    tier_label: tierLabel,
+    is_overridden: true,
+    updated_by: record.updatedBy || 'Master Admin',
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!isSupabaseConfigured) {
+    return { data: payload, error: null };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('monthly_cohorts')
+      .upsert(payload, { onConflict: 'cohort_month' })
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      const missingTable =
+        error.code === '42P01' ||
+        error.code === 'PGRST205' ||
+        error.message?.includes('does not exist') ||
+        error.message?.includes('Could not find the table');
+      return { data: null, error, missingTable };
+    }
+
+    return { data: (data as MonthlyCohortOverrideRecord) || payload, error: null };
+  } catch (err: any) {
+    return { data: null, error: err };
   }
 }

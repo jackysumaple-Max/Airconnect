@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Plan, CMSConfig } from '../../types/telecom';
 import {
   Sparkles,
@@ -64,8 +64,11 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
   const [heroPromoPrice, setHeroPromoPrice] = useState(cms.heroPromoPrice || '$27');
   const [heroPromoData, setHeroPromoData] = useState(cms.heroPromoData || '50GB');
   const [heroImage, setHeroImage] = useState(cms.heroImage || '/assets/aistudio/image_de9eb1a6.png');
-  const [announcementBarText, setAnnouncementBarText] = useState(cms.announcementBarText);
-  const [announcementActive, setAnnouncementActive] = useState(cms.announcementActive);
+  const [announcementBarText, setAnnouncementBarText] = useState(
+    cms.announcementBarText ||
+      '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'
+  );
+  const [announcementActive, setAnnouncementActive] = useState(cms.announcementActive ?? true);
   const [supportPhone, setSupportPhone] = useState(cms.supportPhone);
   const [businessHours, setBusinessHours] = useState(cms.businessHours);
   const [roamingFinePrint, setRoamingFinePrint] = useState(cms.roamingFinePrint || '');
@@ -103,7 +106,43 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
 
   const [draggedPlanIndex, setDraggedPlanIndex] = useState<number | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Sync local editor fields whenever cms prop hydrates asynchronously from Supabase
+  useEffect(() => {
+    setHeroTitle(cms.heroTitle || 'CTExcel Mobile Plans. Powered by Telus.');
+    setHeroSubtitle(
+      cms.heroSubtitle ||
+        'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.'
+    );
+    setHeroBadge(cms.heroBadge || 'Exclusive Promotional Offer');
+    setHeroPromoPrice(cms.heroPromoPrice || '$27');
+    setHeroPromoData(cms.heroPromoData || '50GB');
+    setHeroImage(cms.heroImage || '/assets/aistudio/image_de9eb1a6.png');
+    setAnnouncementBarText(
+      cms.announcementBarText ||
+        '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'
+    );
+    setAnnouncementActive(cms.announcementActive ?? true);
+    setSupportPhone(cms.supportPhone);
+    setBusinessHours(cms.businessHours);
+    setRoamingFinePrint(cms.roamingFinePrint || '');
+    setHeroFeature1(cms.heroFeature1 || 'Free China-Canada Roaming');
+    setHeroFeature2(cms.heroFeature2 || 'Complimentary Chinese Phone #');
+    setHeroFeature3(cms.heroFeature3 || 'Unlimited Calling to 9 Countries');
+    setHeroFeature4(cms.heroFeature4 || 'Free Instant eSIM QR Code');
+    setHeroCardTag(cms.heroCardTag || 'DUAL NUMBER SERVICE');
+    setHeroCardTitle(cms.heroCardTitle || 'Canada + China Dual Line');
+    setHeroCardPrice(cms.heroCardPrice || '$27/mo');
+    setHeroCardSubtitle(cms.heroCardSubtitle || 'Telus 5G eSIM');
+    setHeroBox1Title(cms.heroBox1Title || '4 Countries');
+    setHeroBox1Sub(cms.heroBox1Sub || 'Free Roaming');
+    setHeroBox2Title(cms.heroBox2Title || 'China #');
+    setHeroBox2Sub(cms.heroBox2Sub || 'Included Free');
+    setHeroBox3Title(cms.heroBox3Title || '9 Nations');
+    setHeroBox3Sub(cms.heroBox3Sub || 'Unlimited Talk');
+  }, [cms]);
 
   // Diagnostic & Supabase Credentials state
   const [isTestingInsert, setIsTestingInsert] = useState(false);
@@ -289,13 +328,16 @@ CREATE POLICY "Allow staff to select leads" ON public."${targetTableName || 'Air
     onSaveCms(updatedCms);
     onSavePlans(finalizedPlans);
 
-    await saveSiteSettingsToSupabase({
+    setSaveWarning(null);
+    const supaRes: any = await saveSiteSettingsToSupabase({
       heroTitle,
       heroSubtitle,
       heroImage,
       heroBadge,
       heroPromoPrice,
       heroPromoData,
+      announcementBarText,
+      announcementActive,
       heroFeature1,
       heroFeature2,
       heroFeature3,
@@ -311,6 +353,12 @@ CREATE POLICY "Allow staff to select leads" ON public."${targetTableName || 'Air
       heroBox3Title,
       heroBox3Sub,
     });
+
+    if (supaRes?.warning) {
+      setSaveWarning(supaRes.warning);
+    } else if (supaRes?.error) {
+      setSaveWarning(`Saved locally, but Supabase sync reported: ${supaRes.error.message || 'Unknown error'}`);
+    }
 
     await updatePlanDisplayOrdersInSupabase(finalizedPlans);
 
@@ -406,13 +454,23 @@ CREATE POLICY "Allow staff to select leads" ON public."${targetTableName || 'Air
         </div>
       </div>
 
+      {saveWarning && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 flex items-start gap-2.5 shadow-2xs">
+          <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Database Schema Note</p>
+            <p className="mt-0.5 font-mono text-[11px] break-all">{saveWarning}</p>
+          </div>
+        </div>
+      )}
+
       {/* SECTION 1: Dynamic Hero Banner & Content Management */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-emerald-700" />
             <h3 className="text-base font-bold text-slate-900">
-              Hero Section Headline & Sub-Header Copy
+              Top Promo Banner & Hero Section Copy
             </h3>
           </div>
           <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
@@ -420,39 +478,67 @@ CREATE POLICY "Allow staff to select leads" ON public."${targetTableName || 'Air
           </span>
         </div>
 
-        {/* Top Announcement Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-          <div className="md:col-span-8">
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Top Announcement Ticker Banner
-            </label>
-            <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-                <BellRing className="h-4 w-4" />
+        {/* Top Promo Banner */}
+        <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/40 p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+            <div className="md:col-span-8">
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-800">
+                  Top Promo Banner
+                </label>
+                <span className="text-[10px] text-emerald-700 font-mono font-medium">
+                  site_settings.top_promo_banner_text
+                </span>
               </div>
-              <input
-                type="text"
-                value={announcementBarText}
-                onChange={(e) => setAnnouncementBarText(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-2 text-xs text-slate-900 focus:border-emerald-500 outline-none"
-              />
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-emerald-700">
+                  <BellRing className="h-4 w-4" />
+                </div>
+                <input
+                  type="text"
+                  value={announcementBarText}
+                  onChange={(e) => setAnnouncementBarText(e.target.value)}
+                  placeholder="🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!"
+                  className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 py-2 text-xs text-slate-900 focus:border-emerald-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="md:col-span-4 flex items-center justify-between gap-3 pt-4">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={announcementActive}
+                  onChange={(e) => setAnnouncementActive(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                <span className="ml-3 text-xs font-semibold text-slate-700">
+                  Show Top Banner
+                </span>
+              </label>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setAnnouncementBarText(
+                    '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'
+                  )
+                }
+                className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap cursor-pointer"
+              >
+                Reset Default
+              </button>
             </div>
           </div>
 
-          <div className="md:col-span-4 flex items-center gap-3 pt-5">
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={announcementActive}
-                onChange={(e) => setAnnouncementActive(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              <span className="ml-3 text-xs font-semibold text-slate-700">
-                Show Announcement Bar
-              </span>
-            </label>
-          </div>
+          {/* Live Mini Preview of Top Promotional Green Bar */}
+          {announcementActive && (
+            <div className="rounded-lg bg-[#08281D] border border-emerald-900/50 py-1.5 px-3 text-center text-[11px] font-semibold text-emerald-200 flex items-center justify-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-emerald-400 shrink-0" />
+              <span className="truncate">{announcementBarText || '(Empty banner text)'}</span>
+            </div>
+          )}
         </div>
 
         {/* Main Header & Promo Badge */}

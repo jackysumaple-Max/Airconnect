@@ -13,7 +13,7 @@ const STORAGE_KEYS = {
   PLANS: 'ctexcel_plans_v3',
   CMS: 'ctexcel_cms_v3',
   STAFF: 'ctexcel_staff_v4',
-  MONTHLY_VOLUMES: 'ctexcel_monthly_volumes_v3',
+  MONTHLY_VOLUMES: 'ctexcel_monthly_volumes_v4',
   AUTH_SESSION: 'ctexcel_staff_session_v3',
 };
 
@@ -340,12 +340,7 @@ export const INITIAL_CMS: CMSConfig = {
   heroBox3Sub: 'Unlimited Talk',
 };
 
-export const DEFAULT_MONTHLY_VOLUMES: Record<string, number> = {
-  '2026-08': 142,
-  '2026-09': 218,
-  '2026-10': 185,
-  '2026-11': 116,
-};
+export const DEFAULT_MONTHLY_VOLUMES: Record<string, number> = {};
 
 export function getResidualTierForCount(count: number): {
   tier: 'Tier 1 (7%)' | 'Tier 2 (9%)';
@@ -394,353 +389,34 @@ export function evaluateClawbackRisk(
   };
 }
 
-// Initial realistic customer database with Master Unassigned Pool leads & rep attributions
-export const INITIAL_CUSTOMERS: CustomerRecord[] = [
-  // --- INBOUND LEADS IN MASTER UNASSIGNED POOL (Visible only to Admin initially) ---
-  {
-    id: 'LEAD-9011',
-    status: 'lead',
-    firstName: 'Wei',
-    lastName: 'Zhang',
-    fullName: 'Wei Zhang',
-    email: 'wei.zhang@student.utoronto.ca',
-    phone: '(416) 720-8819',
-    preferredPlanId: 'ctexcel-27-50gb',
-    preferredPlanName: '$27 / 50GB Plan (Free China-Canada Roaming)',
-    monthlyPlanPrice: 27,
-    salesRep: 'Unassigned', // In Master Unassigned Pool
-    referralSource: 'WeChat Group Link',
-    submittedAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    callbackTimePreference: 'As soon as possible',
-    notes: 'New lead from public website. In master unassigned pool waiting for Admin distribution.',
-    leadFollowUpStatus: 'new',
-    idVerification: { status: 'unverified' },
-    commission: { amount: 40.5, status: 'pending', isClawbackFlagged: false, multiplierUsed: 1.5 },
-  },
-  {
-    id: 'LEAD-9012',
-    status: 'lead',
-    firstName: 'Jessica',
-    lastName: 'Kao',
-    fullName: 'Jessica Kao',
-    email: 'jess.kao@innovate.ca',
-    phone: '(604) 318-9922',
-    preferredPlanId: 'ctexcel-35-75gb-quad',
-    preferredPlanName: '$35 / 75GB Quad-Roam (China-US-Canada-Mexico)',
-    monthlyPlanPrice: 35,
-    salesRep: 'Chloe Martin', // Assigned by Admin to Chloe
-    referralSource: 'Instagram Promo Link',
-    submittedAt: new Date(Date.now() - 1000 * 60 * 75).toISOString(),
-    callbackTimePreference: 'Evening (5-8 PM)',
-    notes: 'Consultant traveling across Vancouver, San Francisco, and Shenzhen. Assigned by Admin to Chloe Martin.',
-    leadFollowUpStatus: 'callback_scheduled',
-    idVerification: { status: 'pending', idType: 'Passport' },
-    commission: { amount: 43.75, status: 'pending', isClawbackFlagged: false, multiplierUsed: 1.25 },
-    assignedBy: 'Jacky (Master Admin)',
-    assignedAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-  },
-  {
-    id: 'LEAD-9013',
-    status: 'lead',
-    firstName: 'Marcus',
-    lastName: 'Liu',
-    fullName: 'Marcus Liu',
-    email: 'marcus.liu@techhub.co',
-    phone: '(647) 801-4455',
-    preferredPlanId: 'ctexcel-30-75gb',
-    preferredPlanName: '$30 / 75GB Plan (Free China-Canada Roaming)',
-    monthlyPlanPrice: 30,
-    salesRep: 'Unassigned', // In Master Unassigned Pool
-    referralSource: 'Xiaohongshu / RED',
-    submittedAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    callbackTimePreference: 'Today Afternoon',
-    notes: 'Porting from Fido. In unassigned pool.',
-    leadFollowUpStatus: 'new',
-    idVerification: { status: 'unverified' },
-    commission: { amount: 45.0, status: 'pending', isClawbackFlagged: false, multiplierUsed: 1.5 },
-  },
-  {
-    id: 'LEAD-9014',
-    status: 'lead',
-    firstName: 'David',
-    lastName: 'Sun',
-    fullName: 'David Sun',
-    email: 'david.sun@enterprise.ca',
-    phone: '(416) 991-3829',
-    preferredPlanId: 'ctexcel-30-50gb-quad',
-    preferredPlanName: '$30 / 50GB Quad-Roam',
-    monthlyPlanPrice: 30,
-    salesRep: 'Aarav Patel', // Assigned to Aarav
-    referralSource: 'Direct / Referral',
-    submittedAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-    callbackTimePreference: 'Morning 10am-12pm',
-    notes: 'Assigned to Aarav Patel. Contacted customer and requested ID upload.',
-    leadFollowUpStatus: 'contacted',
-    idVerification: { status: 'pending', idType: 'Driver License' },
-    commission: { amount: 45.0, status: 'pending', isClawbackFlagged: false, multiplierUsed: 1.5 },
-    assignedBy: 'Jacky (Master Admin)',
-    assignedAt: new Date(Date.now() - 1000 * 60 * 60 * 10).toISOString(),
-  },
+// Clean production customer slate (populated from real Supabase database records)
+const LEGACY_MOCK_CUSTOMER_IDS = new Set([
+  'LEAD-9011',
+  'LEAD-9012',
+  'LEAD-9013',
+  'LEAD-9014',
+  'ACT-5101',
+  'ACT-5102',
+  'ACT-5103',
+  'ACT-5104',
+  'ACT-5105',
+  'CX-3011',
+  'CX-3012',
+]);
 
-  // --- ACTIVE LINES WITH MULTIPLIER AND RESIDUALS ---
-  // September 2026: 218 activations (Tier 2: 9%)
-  {
-    id: 'ACT-5101',
-    status: 'active_line',
-    firstName: 'Hao',
-    lastName: 'Wang',
-    fullName: 'Hao Wang',
-    email: 'hao.wang@ontariotech.ca',
-    phone: '(416) 881-2244',
-    activatedPhone: '(416) 881-2244',
-    preferredPlanId: 'ctexcel-27-50gb',
-    preferredPlanName: '$27 / 50GB Plan',
-    monthlyPlanPrice: 27,
-    salesRep: 'Aarav Patel',
-    referralSource: 'WeChat Promo',
-    submittedAt: '2026-09-08T10:00:00Z',
-    activationStartDate: '2026-09-10',
-    simType: 'eSIM',
-    imeiOrSimNumber: '89014103211192847291',
-    notes: 'Aarav Patel 1.5x multiplier applied ($27 * 1.5 = $40.50). 9% Tier 2 residual.',
-    address: { street: '180 University Ave, Unit 1204', city: 'Toronto', province: 'ON', postalCode: 'M5H 0A2' },
-    idVerification: { status: 'verified', idType: 'Driver License', idNumberMasked: 'W8102-*****-1129', verifiedBy: 'Aarav Patel' },
-    commission: {
-      amount: 40.5, // $27 * 1.5
-      status: 'paid',
-      payoutDate: '2026-10-01',
-      isClawbackFlagged: false,
-      multiplierUsed: 1.5,
-    },
-    residual: {
-      activationCohort: '2026-09',
-      lockedResidualRate: 0.09,
-      monthlyResidualAmount: 2.43,
-      tierLabel: 'Tier 2 (9%)',
-    },
-  },
-  {
-    id: 'ACT-5102',
-    status: 'active_line',
-    firstName: 'Vivian',
-    lastName: 'Zhou',
-    fullName: 'Vivian Zhou',
-    email: 'vivian.z@ubc.ca',
-    phone: '(604) 992-3311',
-    activatedPhone: '(604) 992-3311',
-    preferredPlanId: 'ctexcel-35-75gb-quad',
-    preferredPlanName: '$35 / 75GB Quad-Roam',
-    monthlyPlanPrice: 35,
-    salesRep: 'Chloe Martin',
-    referralSource: 'Student Referral',
-    submittedAt: '2026-09-14T11:00:00Z',
-    activationStartDate: '2026-09-16',
-    simType: 'eSIM',
-    imeiOrSimNumber: '89014103211192848832',
-    notes: 'Chloe Martin 1.25x multiplier applied ($35 * 1.25 = $43.75).',
-    address: { street: '6138 Student Union Blvd', city: 'Vancouver', province: 'BC', postalCode: 'V6T 1Z1' },
-    idVerification: { status: 'verified', idType: 'Passport', idNumberMasked: 'EH****39', verifiedBy: 'Chloe Martin' },
-    commission: {
-      amount: 43.75, // $35 * 1.25
-      status: 'paid',
-      payoutDate: '2026-10-01',
-      isClawbackFlagged: false,
-      multiplierUsed: 1.25,
-    },
-    residual: {
-      activationCohort: '2026-09',
-      lockedResidualRate: 0.09,
-      monthlyResidualAmount: 3.15,
-      tierLabel: 'Tier 2 (9%)',
-    },
-  },
-
-  // October 2026: 185 activations (Tier 1: 7%)
-  {
-    id: 'ACT-5103',
-    status: 'active_line',
-    firstName: 'David',
-    lastName: 'Song',
-    fullName: 'David Song',
-    email: 'david.song@nexustechnologies.ca',
-    phone: '(416) 450-9901',
-    activatedPhone: '(416) 450-9901',
-    preferredPlanId: 'ctexcel-30-50gb-quad',
-    preferredPlanName: '$30 / 50GB Quad-Roam',
-    monthlyPlanPrice: 30,
-    salesRep: 'Marcus Vance',
-    referralSource: 'Google Ad',
-    submittedAt: '2026-10-04T14:00:00Z',
-    activationStartDate: '2026-10-06',
-    simType: 'Physical SIM',
-    imeiOrSimNumber: '89014103211192841029',
-    notes: 'Marcus Vance 1.0x multiplier ($30 * 1.0 = $30.00). October Tier 1 (7%).',
-    address: { street: '200 Front St W', city: 'Toronto', province: 'ON', postalCode: 'M5V 3J1' },
-    idVerification: { status: 'verified', idType: 'Driver License', idNumberMasked: 'S3192-*****-8810', verifiedBy: 'Marcus Vance' },
-    commission: {
-      amount: 30.0, // $30 * 1.0
-      status: 'paid',
-      payoutDate: '2026-11-01',
-      isClawbackFlagged: false,
-      multiplierUsed: 1.0,
-    },
-    residual: {
-      activationCohort: '2026-10',
-      lockedResidualRate: 0.07,
-      monthlyResidualAmount: 2.1,
-      tierLabel: 'Tier 1 (7%)',
-    },
-  },
-  {
-    id: 'ACT-5104',
-    status: 'active_line',
-    firstName: 'Grace',
-    lastName: 'Lin',
-    fullName: 'Grace Lin',
-    email: 'grace.lin@biopharma.ca',
-    phone: '(647) 551-7788',
-    activatedPhone: '(647) 551-7788',
-    preferredPlanId: 'ctexcel-35-100gb',
-    preferredPlanName: '$35 / 100GB Plan',
-    monthlyPlanPrice: 35,
-    salesRep: 'Aarav Patel',
-    referralSource: 'Friend Referral',
-    submittedAt: '2026-10-18T16:00:00Z',
-    activationStartDate: '2026-10-20',
-    simType: 'eSIM',
-    imeiOrSimNumber: '89014103211192849921',
-    notes: 'Aarav Patel 1.5x multiplier ($35 * 1.5 = $52.50). Commission pending.',
-    address: { street: '55 University Ave', city: 'Toronto', province: 'ON', postalCode: 'M5J 2H7' },
-    idVerification: { status: 'verified', idType: 'Driver License', idNumberMasked: 'L9921-*****-4410', verifiedBy: 'Aarav Patel' },
-    commission: {
-      amount: 52.5, // $35 * 1.5
-      status: 'pending',
-      isClawbackFlagged: false,
-      multiplierUsed: 1.5,
-    },
-    residual: {
-      activationCohort: '2026-10',
-      lockedResidualRate: 0.07,
-      monthlyResidualAmount: 2.45,
-      tierLabel: 'Tier 1 (7%)',
-    },
-  },
-  {
-    id: 'ACT-5105',
-    status: 'active_line',
-    firstName: 'Kevin',
-    lastName: 'Zhao',
-    fullName: 'Kevin Zhao',
-    email: 'k.zhao@montreallogistics.ca',
-    phone: '(514) 772-9933',
-    activatedPhone: '(514) 772-9933',
-    preferredPlanId: 'ctexcel-30-75gb',
-    preferredPlanName: '$30 / 75GB Plan',
-    monthlyPlanPrice: 30,
-    salesRep: 'Chloe Martin',
-    referralSource: 'Walk-in',
-    submittedAt: '2026-08-11T12:00:00Z',
-    activationStartDate: '2026-08-14',
-    simType: 'Physical SIM',
-    imeiOrSimNumber: '89014103211192843312',
-    notes: 'Chloe Martin 1.25x multiplier ($30 * 1.25 = $37.50). Paid.',
-    address: { street: '1000 Rue De La Gauchetière O', city: 'Montreal', province: 'QC', postalCode: 'H3B 4W5' },
-    idVerification: { status: 'verified', idType: 'PR Card', idNumberMasked: 'PR****88', verifiedBy: 'Chloe Martin' },
-    commission: {
-      amount: 37.5,
-      status: 'paid',
-      payoutDate: '2026-09-01',
-      isClawbackFlagged: false,
-      multiplierUsed: 1.25,
-    },
-    residual: {
-      activationCohort: '2026-08',
-      lockedResidualRate: 0.07,
-      monthlyResidualAmount: 2.1,
-      tierLabel: 'Tier 1 (7%)',
-    },
-  },
-
-  // --- NON-ACTIVE LINES (CANCELED) ---
-  // Line canceled at Day 48 (< 180 days) -> Automatic clawback triggered
-  {
-    id: 'CX-3011',
-    status: 'non_active_line',
-    firstName: 'Simon',
-    lastName: 'Huang',
-    fullName: 'Simon Huang',
-    email: 'simon.h@pacific.ca',
-    phone: '(604) 555-4819',
-    activatedPhone: '(604) 555-4819',
-    preferredPlanId: 'ctexcel-27-50gb',
-    preferredPlanName: '$27 / 50GB Plan',
-    monthlyPlanPrice: 27,
-    salesRep: 'Chloe Martin',
-    referralSource: 'WeChat Ad',
-    submittedAt: '2026-08-15T09:00:00Z',
-    activationStartDate: '2026-08-18',
-    deactivationDate: '2026-10-05', // 48 days (< 180)
-    simType: 'Physical SIM',
-    notes: 'Moved back to Beijing. Canceled at 48 days. Commission clawed back from Chloe Martin.',
-    address: { street: '888 Burrard St', city: 'Vancouver', province: 'BC', postalCode: 'V6Z 1X9' },
-    idVerification: { status: 'verified', idType: 'Driver License', idNumberMasked: 'H1948-*****-2201', verifiedBy: 'Chloe Martin' },
-    commission: {
-      amount: 33.75, // $27 * 1.25 multiplier
-      status: 'clawback',
-      payoutDate: '2026-09-01',
-      isClawbackFlagged: true,
-      daysActiveBeforeCancel: 48,
-      multiplierUsed: 1.25,
-      clawbackReason: 'Automated 180-day chargeback: Line canceled at 48 days (under 180-day threshold). Commission clawback flagged for sales rep Chloe Martin ($33.75).',
-      clawbackTriggeredAt: '2026-10-05T14:30:00Z',
-    },
-    residual: {
-      activationCohort: '2026-08',
-      lockedResidualRate: 0.07,
-      monthlyResidualAmount: 0,
-      tierLabel: 'Tier 1 (7%)',
-    },
-  },
-  // Line canceled after 240 days (> 180 days) -> Upfront commission safe
-  {
-    id: 'CX-3012',
-    status: 'non_active_line',
-    firstName: 'Claire',
-    lastName: 'Meng',
-    fullName: 'Claire Meng',
-    email: 'claire.meng@finance.ca',
-    phone: '(416) 901-2244',
-    activatedPhone: '(416) 901-2244',
-    preferredPlanId: 'ctexcel-35-75gb-quad',
-    preferredPlanName: '$35 / 75GB Quad-Roam',
-    monthlyPlanPrice: 35,
-    salesRep: 'Aarav Patel',
-    referralSource: 'Instagram',
-    submittedAt: '2025-12-01T10:00:00Z',
-    activationStartDate: '2025-12-05',
-    deactivationDate: '2026-08-02', // 240 days (> 180)
-    simType: 'eSIM',
-    notes: 'Active for 8 months. Passed 180-day guarantee period. Upfront commission of $52.50 kept by Aarav.',
-    address: { street: '161 Bay St', city: 'Toronto', province: 'ON', postalCode: 'M5J 2S1' },
-    idVerification: { status: 'verified', idType: 'Passport', idNumberMasked: 'PE****91', verifiedBy: 'Aarav Patel' },
-    commission: {
-      amount: 52.5, // $35 * 1.5
-      status: 'paid',
-      payoutDate: '2026-01-01',
-      isClawbackFlagged: false,
-      daysActiveBeforeCancel: 240,
-      multiplierUsed: 1.5,
-      clawbackReason: 'Line was active for 240 days (exceeds 180-day threshold). Rep keeps upfront commission.',
-    },
-  },
-];
+export const INITIAL_CUSTOMERS: CustomerRecord[] = [];
 
 export const TelecomStorage = {
   getCustomers(): CustomerRecord[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
       if (data) {
-        return JSON.parse(data);
+        const parsed: CustomerRecord[] = JSON.parse(data);
+        const cleaned = parsed.filter((c) => !LEGACY_MOCK_CUSTOMER_IDS.has(c.id));
+        if (cleaned.length !== parsed.length) {
+          this.saveCustomers(cleaned);
+        }
+        return cleaned;
       }
     } catch (e) {
       console.error('Failed to read customers', e);
@@ -1186,7 +862,16 @@ export const TelecomStorage = {
 
   getMonthlyVolume(cohort: string): number {
     const volumes = this.getMonthlyVolumes();
-    return volumes[cohort] || 45;
+    if (volumes[cohort] !== undefined) {
+      return volumes[cohort];
+    }
+    const customers = this.getCustomers();
+    return customers.filter(
+      (c) =>
+        !c.isDeleted &&
+        (c.status === 'active_line' || c.status === 'non_active_line') &&
+        (c.residual?.activationCohort === cohort || c.activationStartDate?.startsWith(cohort))
+    ).length;
   },
 
   setMonthlyVolume(cohort: string, count: number): void {
@@ -1214,20 +899,47 @@ export const TelecomStorage = {
 
   getCohortSummaries(): MonthlyCohortSummary[] {
     const volumes = this.getMonthlyVolumes();
-    const customers = this.getCustomers();
+    const customers = this.getCustomers().filter((c) => !c.isDeleted);
     const currentCohort = new Date().toISOString().substring(0, 7);
-    const cohorts = Object.keys(volumes).sort().reverse();
+
+    const cohortSet = new Set<string>();
+    cohortSet.add(currentCohort);
+    Object.keys(volumes).forEach((m) => cohortSet.add(m));
+    customers.forEach((c) => {
+      if (c.status === 'active_line' || c.status === 'non_active_line') {
+        const m =
+          c.residual?.activationCohort ||
+          (c.activationStartDate && c.activationStartDate.length >= 7
+            ? c.activationStartDate.substring(0, 7)
+            : c.submittedAt?.substring(0, 7));
+        if (m && m.length === 7) cohortSet.add(m);
+      }
+    });
+
+    const cohorts = Array.from(cohortSet).sort().reverse();
 
     return cohorts.map((cohort) => {
-      const count = volumes[cohort] || 0;
-      const { tier, rate } = getResidualTierForCount(count);
-
-      const cohortCustomers = customers.filter(
-        (c) => c.status === 'active_line' && (c.residual?.activationCohort === cohort || c.activationStartDate?.startsWith(cohort))
+      const cohortActiveCustomers = customers.filter(
+        (c) =>
+          c.status === 'active_line' &&
+          (c.residual?.activationCohort === cohort ||
+            c.activationStartDate?.startsWith(cohort) ||
+            (!c.activationStartDate && c.submittedAt?.startsWith(cohort)))
       );
 
-      const activeSubscribers = cohortCustomers.length;
-      const totalMonthlyBilling = cohortCustomers.reduce((sum, c) => sum + (c.monthlyPlanPrice || 27), 0);
+      const cohortAllActivations = customers.filter(
+        (c) =>
+          (c.status === 'active_line' || c.status === 'non_active_line') &&
+          (c.residual?.activationCohort === cohort ||
+            c.activationStartDate?.startsWith(cohort) ||
+            (!c.activationStartDate && c.submittedAt?.startsWith(cohort)))
+      );
+
+      const count = volumes[cohort] ?? cohortAllActivations.length;
+      const { tier, rate } = getResidualTierForCount(count);
+
+      const activeSubscribers = cohortActiveCustomers.length;
+      const totalMonthlyBilling = cohortActiveCustomers.reduce((sum, c) => sum + (c.monthlyPlanPrice || 0), 0);
       const monthlyResidualPayout = Number((totalMonthlyBilling * rate).toFixed(2));
 
       const [year, month] = cohort.split('-');

@@ -101,22 +101,21 @@ export const StaffAuthGate: React.FC<StaffAuthGateProps> = ({ onSuccess, onExitT
         validPasswords.includes(inputPassword);
 
       if (matchesLocalPassword) {
-        // Background sync with Supabase Auth if configured, so Supabase records the credentials
+        // Establish Supabase Auth session if configured so authenticated RLS policies (UPDATE/DELETE) work immediately
         if (isSupabaseConfigured && staffToLogin.email) {
           const syncEmail = staffToLogin.email;
-          signInWithSupabase(syncEmail, inputPassword).then(async (res) => {
+          try {
+            const res = await signInWithSupabase(syncEmail, inputPassword);
             if (res.error) {
-              try {
-                await signUpStaffInSupabase(syncEmail, inputPassword, {
-                  username: staffToLogin!.username,
-                  name: staffToLogin!.name,
-                  role: staffToLogin!.role,
-                });
-              } catch {
-                // Background sync silently succeeds
-              }
+              await signUpStaffInSupabase(syncEmail, inputPassword, {
+                username: staffToLogin.username,
+                name: staffToLogin.name,
+                role: staffToLogin.role,
+              });
             }
-          }).catch(() => {});
+          } catch {
+            // Non-blocking fallback so local CRM login still succeeds
+          }
         }
 
         TelecomStorage.setAuthSession(staffToLogin);
