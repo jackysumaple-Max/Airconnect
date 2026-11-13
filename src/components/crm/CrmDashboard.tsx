@@ -172,8 +172,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           return timeB - timeA;
         });
 
-        // Set exclusively from Supabase data. Do not touch or append LocalStorage.
-        setLiveDbLeads(mapped);
+        // Set exclusively from Supabase data with a fresh array reference. Do not touch or append LocalStorage.
+        setLiveDbLeads([...mapped]);
         setLastRefreshedAt(new Date());
       }
     } catch (err: any) {
@@ -409,7 +409,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   const handleBulkDeleteLeads = async () => {
     if (selectedIds.length === 0) return;
 
-    const count = selectedIds.length;
+    const idsToDelete = [...selectedIds];
+    const count = idsToDelete.length;
     const confirmed = window.confirm(
       `Are you sure you want to delete ${count} lead${count === 1 ? '' : 's'}?`
     );
@@ -420,7 +421,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
 
     try {
-      const res = await supabase.from('Airwireless').delete().in('id', selectedIds);
+      const res = await supabase.from('Airwireless').delete().in('id', idsToDelete);
 
       if (res.error) {
         console.error('Supabase bulk delete error on Airwireless:', res.error);
@@ -430,6 +431,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         return;
       }
 
+      // Immediately update local table state so deleted rows disappear at once
+      const deletedSet = new Set(idsToDelete);
+      setLiveDbLeads((prev) => (prev ? prev.filter((item) => !deletedSet.has(item.id)) : prev));
+      if (onUpdateCustomers) {
+        onUpdateCustomers(customers.filter((c) => !deletedSet.has(c.id)));
+      }
+
+      // Re-trigger the main Supabase Airwireless.select('*') fetch and clear selection
       await fetchLiveLeads();
       setSelectedIds([]);
       setBulkActionNotice({
@@ -450,13 +459,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   const handleBulkAssignLeads = async (selectedRep: string) => {
     if (selectedIds.length === 0 || !selectedRep) return;
 
-    const count = selectedIds.length;
+    const idsToAssign = [...selectedIds];
+    const count = idsToAssign.length;
     setIsBulkProcessing(true);
     setBulkActionNotice(null);
     setDbFetchError(null);
 
     try {
-      const res = await updateAirwirelessAssign(selectedIds, selectedRep);
+      const res = await updateAirwirelessAssign(idsToAssign, selectedRep);
 
       if (res.error) {
         console.error('Supabase bulk assign error on Airwireless:', res.error);
@@ -466,6 +476,22 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         return;
       }
 
+      // Immediately reflect updated rep in UI state
+      const assignedSet = new Set(idsToAssign);
+      setLiveDbLeads((prev) =>
+        prev
+          ? prev.map((item) =>
+              assignedSet.has(item.id) ? { ...item, salesRep: selectedRep } : item
+            )
+          : prev
+      );
+      if (onUpdateCustomers) {
+        onUpdateCustomers(
+          customers.map((c) => (assignedSet.has(c.id) ? { ...c, salesRep: selectedRep } : c))
+        );
+      }
+
+      // Re-trigger the main Supabase Airwireless.select('*') fetch and clear selection
       await fetchLiveLeads();
       setSelectedIds([]);
       setBulkActionNotice({

@@ -80,6 +80,12 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
     }
   }, [someSelected]);
 
+  useEffect(() => {
+    if (selectedIds.length === 0) {
+      setBulkSelectedRep('');
+    }
+  }, [selectedIds.length]);
+
   // Separate Unassigned leads count for header badge
   const unassignedLeads = leads.filter(
     (l) => l.salesRep === 'Unassigned' || !l.salesRep || l.salesRep === 'Direct / Web'
