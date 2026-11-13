@@ -26,6 +26,7 @@ import {
   mapAirwirelessRowToCustomerRecord,
   toAirwirelessDbStatus,
 } from '../../services/supabase';
+import { CrmErrorBoundary } from './CrmErrorBoundary';
 import {
   Users,
   Activity,
@@ -52,6 +53,7 @@ interface CrmDashboardProps {
   currentStaff: StaffRep;
   onSelectStaff: (staff: StaffRep) => void;
   onBackToLanding: () => void;
+  onNavigateToPublic?: () => void;
   onSaveCustomer: (id: string, updates: Partial<CustomerRecord>) => void;
   onDeleteCustomer: (id: string) => void;
   onAddCustomer: (customer: CustomerRecord) => void;
@@ -72,6 +74,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
   currentStaff,
   onSelectStaff,
   onBackToLanding,
+  onNavigateToPublic,
   onSaveCustomer,
   onDeleteCustomer,
   onAddCustomer,
@@ -120,27 +123,61 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
   const onUpdateCustomersRef = useRef(onUpdateCustomers);
   onUpdateCustomersRef.current = onUpdateCustomers;
+  const isMountedRef = useRef(true);
+  const isRefreshingInFlightRef = useRef(false);
+  const airwirelessColumnsRef = useRef<Set<string>>(new Set());
+
+  const handleTabChange = useCallback(
+    (
+      nextTab:
+        | 'leads'
+        | 'active_lines'
+        | 'non_active_lines'
+        | 'residuals'
+        | 'commissions'
+        | 'staff'
+        | 'cms'
+        | 'deleted_items'
+    ) => {
+      setActiveTab(nextTab);
+      setSelectedIds([]);
+      setBulkActionNotice(null);
+      setDbFetchError(null);
+    },
+    []
+  );
 
   // Universal Live Refresh: Fetches all rows from Supabase 'Airwireless' table (including UUID `id`),
-  // updates React state cleanly, and keeps App customers in sync.
+  // updates React state cleanly, and keeps App customers in sync without triggering re-fetch loops.
   const refreshData = useCallback(async () => {
-    setIsRefreshingLeads(true);
-    setDbFetchError(null);
+    if (isRefreshingInFlightRef.current) return;
+    isRefreshingInFlightRef.current = true;
+    if (isMountedRef.current) {
+      setIsRefreshingLeads(true);
+      setDbFetchError(null);
+    }
+
     try {
       const { data, error } = await supabase.from('Airwireless').select('*');
+      if (!isMountedRef.current) return;
+
       if (error) {
         console.error('Supabase live fetch error on Airwireless:', error);
         setDbFetchError(error.message || 'Error fetching records from Supabase Airwireless table');
         return;
       }
 
-      const mapped: CustomerRecord[] = (data || [])
+      if (Array.isArray(data) && data.length > 0 && data[0] && typeof data[0] === 'object') {
+        airwirelessColumnsRef.current = new Set(Object.keys(data[0]));
+      }
+
+      const mapped: CustomerRecord[] = (Array.isArray(data) ? data : [])
         .filter((item: any) => item && item.id !== undefined && item.id !== null)
         .map(mapAirwirelessRowToCustomerRecord);
 
       mapped.sort((a, b) => {
-        const timeA = new Date(a.submittedAt || 0).getTime();
-        const timeB = new Date(b.submittedAt || 0).getTime();
+        const timeA = new Date(a.submittedAt || 0).getTime() || 0;
+        const timeB = new Date(b.submittedAt || 0).getTime() || 0;
         return timeB - timeA;
       });
 
@@ -151,22 +188,31 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       }
     } catch (err: any) {
       console.error('Exception fetching live records from Airwireless:', err);
-      setDbFetchError(err?.message || 'Failed to connect to Supabase database');
-      setLiveDbLeads([]);
+      if (isMountedRef.current) {
+        setDbFetchError(err?.message || 'Failed to connect to Supabase database');
+        setLiveDbLeads([]);
+      }
     } finally {
-      setIsRefreshingLeads(false);
+      isRefreshingInFlightRef.current = false;
+      if (isMountedRef.current) {
+        setIsRefreshingLeads(false);
+      }
     }
   }, []);
 
   // Force global fetch immediately on component mount
   useEffect(() => {
+    isMountedRef.current = true;
     refreshData();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, [refreshData]);
 
   // Authoritative dataset from Supabase Airwireless when loaded
   const mergedDatabaseCustomers = useMemo(() => {
     if (liveDbLeads !== null) return liveDbLeads;
-    return customers;
+    return Array.isArray(customers) ? customers : [];
   }, [customers, liveDbLeads]);
 
   // Available months dynamically extracted from real customer records
@@ -175,7 +221,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     monthSet.add(new Date().toISOString().substring(0, 7));
     mergedDatabaseCustomers.forEach((c) => {
       const d = c.submittedAt || c.activationStartDate || c.deactivationDate || c.commission?.payoutDate;
-      if (d && d.length >= 7) {
+      if (typeof d === 'string' && d.length >= 7) {
         monthSet.add(d.substring(0, 7));
       }
     });
@@ -254,6 +300,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
   // Filtered dataset for currently active tab
   const filteredDataset = useMemo(() => {
+    const safeLower = (val: unknown) => String(val ?? '').toLowerCase();
+
     // For leads: Direct global fetch from Supabase. No date-range or session isolation filters.
     if (activeTab === 'leads') {
       let result = leads;
@@ -263,12 +311,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         result = result.filter((item) => {
-          const matchName = item.fullName.toLowerCase().includes(q);
-          const matchEmail = item.email.toLowerCase().includes(q);
-          const matchPhone = item.phone.toLowerCase().includes(q) || (item.activatedPhone && item.activatedPhone.toLowerCase().includes(q));
-          const matchId = item.id.toLowerCase().includes(q);
-          const matchPlan = item.preferredPlanName.toLowerCase().includes(q);
-          const matchRep = item.salesRep.toLowerCase().includes(q);
+          const matchName = safeLower(item.fullName).includes(q);
+          const matchEmail = safeLower(item.email).includes(q);
+          const matchPhone =
+            safeLower(item.phone).includes(q) ||
+            (item.activatedPhone ? safeLower(item.activatedPhone).includes(q) : false);
+          const matchId = safeLower(item.id).includes(q);
+          const matchPlan = safeLower(item.preferredPlanName).includes(q);
+          const matchRep = safeLower(item.salesRep).includes(q);
           return matchName || matchEmail || matchPhone || matchId || matchPlan || matchRep;
         });
       }
@@ -293,7 +343,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             ? item.activationStartDate || item.submittedAt
             : item.deactivationDate || item.activationStartDate || item.submittedAt;
 
-        if (refDate && refDate.length >= 7) {
+        if (typeof refDate === 'string' && refDate.length >= 7) {
           const itemMonth = refDate.substring(0, 7);
           if (dateFilterMode === 'single') {
             if (itemMonth !== selectedMonth) return false;
@@ -308,12 +358,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchName = item.fullName.toLowerCase().includes(q);
-        const matchEmail = item.email.toLowerCase().includes(q);
-        const matchPhone = item.phone.toLowerCase().includes(q) || (item.activatedPhone && item.activatedPhone.toLowerCase().includes(q));
-        const matchId = item.id.toLowerCase().includes(q);
-        const matchPlan = item.preferredPlanName.toLowerCase().includes(q);
-        const matchRep = item.salesRep.toLowerCase().includes(q);
+        const matchName = safeLower(item.fullName).includes(q);
+        const matchEmail = safeLower(item.email).includes(q);
+        const matchPhone =
+          safeLower(item.phone).includes(q) ||
+          (item.activatedPhone ? safeLower(item.activatedPhone).includes(q) : false);
+        const matchId = safeLower(item.id).includes(q);
+        const matchPlan = safeLower(item.preferredPlanName).includes(q);
+        const matchRep = safeLower(item.salesRep).includes(q);
         return matchName || matchEmail || matchPhone || matchId || matchPlan || matchRep;
       }
 
@@ -517,7 +569,77 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   };
 
-  // Single-Row Follow-Up Status Update (.update({ lead_follow_up_status: newStatus }).eq('id', leadId))
+  // Column-safe status updater targeting Airwireless by primary key `id`
+  const updateAirwirelessStatusColumn = async (
+    leadId: string,
+    targetValue: string,
+    mode: 'lifecycle' | 'followup'
+  ) => {
+    const cols = airwirelessColumnsRef.current;
+    const isColumnError = (err: any) =>
+      Boolean(
+        err &&
+          (err.code === '42703' ||
+            err.code === 'PGRST204' ||
+            err.message?.toLowerCase().includes('column'))
+      );
+
+    if (mode === 'followup') {
+      const preferLeadFollowUp =
+        cols.has('lead_follow_up_status') && !cols.has('follow_up_status');
+      const primaryCol = preferLeadFollowUp ? 'lead_follow_up_status' : 'follow_up_status';
+      const fallbackCol = preferLeadFollowUp ? 'follow_up_status' : 'lead_follow_up_status';
+
+      let res = await supabase
+        .from('Airwireless')
+        .update({ [primaryCol]: targetValue })
+        .eq('id', leadId);
+
+      if (isColumnError(res.error)) {
+        res = await supabase
+          .from('Airwireless')
+          .update({ [fallbackCol]: targetValue })
+          .eq('id', leadId);
+      }
+      return res;
+    }
+
+    // Lifecycle update ('Active' | 'Non-Active' | 'lead')
+    // Primary target: follow_up_status, syncing status column if present in schema
+    const payload: Record<string, any> = {};
+    if (cols.size === 0 || cols.has('follow_up_status')) {
+      payload.follow_up_status = targetValue;
+    }
+    if (cols.has('status')) {
+      payload.status = targetValue;
+    }
+    if (Object.keys(payload).length === 0) {
+      payload.follow_up_status = targetValue;
+    }
+
+    let res = await supabase
+      .from('Airwireless')
+      .update(payload)
+      .eq('id', leadId);
+
+    if (isColumnError(res.error)) {
+      res = await supabase
+        .from('Airwireless')
+        .update({ follow_up_status: targetValue })
+        .eq('id', leadId);
+
+      if (isColumnError(res.error)) {
+        res = await supabase
+          .from('Airwireless')
+          .update({ status: targetValue })
+          .eq('id', leadId);
+      }
+    }
+
+    return res;
+  };
+
+  // Single-Row Follow-Up Status Update (.update({ follow_up_status: newStatus }).eq('id', leadId))
   const handleUpdateLeadStatus = async (leadId: string, newStatus: LeadFollowUpStatus) => {
     if (!leadId) return;
     setIsBulkProcessing(true);
@@ -525,10 +647,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
 
     try {
-      const { error } = await supabase
-        .from('Airwireless')
-        .update({ lead_follow_up_status: newStatus })
-        .eq('id', leadId);
+      const { error } = await updateAirwirelessStatusColumn(leadId, newStatus, 'followup');
 
       if (error) {
         console.error('Supabase lead follow-up status update error on Airwireless:', error);
@@ -550,7 +669,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   };
 
-  // Activate Line (.update({ status: 'Active' }).eq('id', leadId))
+  // Activate Line (.update({ follow_up_status: 'Active' }).eq('id', leadId))
   const handleQuickActivate = async (lead: CustomerRecord) => {
     const leadId = lead?.id;
     if (!leadId) {
@@ -563,10 +682,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
 
     try {
-      const { error } = await supabase
-        .from('Airwireless')
-        .update({ status: 'Active' })
-        .eq('id', leadId);
+      const { error } = await updateAirwirelessStatusColumn(leadId, 'Active', 'lifecycle');
 
       if (error) {
         console.error('Supabase Activate Line error on Airwireless:', error);
@@ -592,7 +708,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   };
 
-  // Move to Non-Active (.update({ status: 'Non-Active' }).eq('id', leadId))
+  // Move to Non-Active (.update({ follow_up_status: 'Non-Active' }).eq('id', leadId))
   const handleDeactivateLine = async (record: CustomerRecord) => {
     const leadId = record?.id;
     if (!leadId) {
@@ -605,10 +721,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setDbFetchError(null);
 
     try {
-      const { error } = await supabase
-        .from('Airwireless')
-        .update({ status: 'Non-Active' })
-        .eq('id', leadId);
+      const { error } = await updateAirwirelessStatusColumn(leadId, 'Non-Active', 'lifecycle');
 
       if (error) {
         console.error('Supabase Non-Active update error on Airwireless:', error);
@@ -640,6 +753,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setBulkActionNotice(null);
     setDbFetchError(null);
 
+    const cols = airwirelessColumnsRef.current;
     const leadPayload: Record<string, any> = {};
     if (updates.firstName !== undefined) leadPayload.first_name = updates.firstName;
     if (updates.lastName !== undefined) leadPayload.last_name = updates.lastName;
@@ -649,18 +763,42 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     if (updates.preferredPlanName !== undefined) leadPayload.preferred_plan_name = updates.preferredPlanName;
     if (updates.preferredPlanId !== undefined) leadPayload.preferred_plan_id = updates.preferredPlanId;
     if (updates.notes !== undefined) leadPayload.notes = updates.notes;
-    if (updates.status !== undefined) leadPayload.status = toAirwirelessDbStatus(updates.status);
     if (updates.salesRep !== undefined) leadPayload.sales_rep = updates.salesRep;
+    if (updates.status !== undefined) {
+      const dbStatus = toAirwirelessDbStatus(updates.status);
+      if (cols.size === 0 || cols.has('follow_up_status')) {
+        leadPayload.follow_up_status = dbStatus;
+      }
+      if (cols.has('status')) {
+        leadPayload.status = dbStatus;
+      }
+    }
 
     if (Object.keys(leadPayload).length > 0) {
-      const { error } = await supabase
+      let res = await supabase
         .from('Airwireless')
         .update(leadPayload)
         .eq('id', id);
 
-      if (error) {
-        console.error('Supabase modal save error on Airwireless:', error);
-        const msg = error.message || 'Failed to save changes to Supabase.';
+      if (
+        res.error &&
+        (res.error.code === '42703' ||
+          res.error.code === 'PGRST204' ||
+          res.error.message?.toLowerCase().includes('column'))
+      ) {
+        const { follow_up_status: _f, ...withoutFollowUp } = leadPayload;
+        if (updates.status !== undefined && withoutFollowUp.status === undefined) {
+          withoutFollowUp.status = toAirwirelessDbStatus(updates.status);
+        }
+        res = await supabase
+          .from('Airwireless')
+          .update(withoutFollowUp)
+          .eq('id', id);
+      }
+
+      if (res.error) {
+        console.error('Supabase modal save error on Airwireless:', res.error);
+        const msg = res.error.message || 'Failed to save changes to Supabase.';
         setDbFetchError(msg);
         setBulkActionNotice({ type: 'error', message: `Save failed: ${msg}` });
         return;
@@ -701,22 +839,44 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     setBulkActionNotice(null);
     setDbFetchError(null);
 
-    const { error } = await supabase.from('Airwireless').insert([
-      {
-        first_name: customer.firstName,
-        last_name: customer.lastName,
-        full_name: customer.fullName,
-        email: customer.email,
-        phone: customer.phone,
-        preferred_plan_id: customer.preferredPlanId,
-        preferred_plan_name: customer.preferredPlanName,
-        monthly_plan_price: customer.monthlyPlanPrice,
-        sales_rep: customer.salesRep || 'Unassigned',
-        referral_source: customer.referralSource || 'Manual CRM Entry',
-        status: toAirwirelessDbStatus(customer.status),
-        notes: customer.notes || '',
-      },
-    ]);
+    const cols = airwirelessColumnsRef.current;
+    const dbStatus = toAirwirelessDbStatus(customer.status);
+    const insertPayload: Record<string, any> = {
+      first_name: customer.firstName,
+      last_name: customer.lastName,
+      full_name: customer.fullName,
+      email: customer.email,
+      phone: customer.phone,
+      preferred_plan_id: customer.preferredPlanId,
+      preferred_plan_name: customer.preferredPlanName,
+      monthly_plan_price: customer.monthlyPlanPrice,
+      sales_rep: customer.salesRep || 'Unassigned',
+      referral_source: customer.referralSource || 'Manual CRM Entry',
+      notes: customer.notes || '',
+    };
+
+    if (cols.size === 0 || cols.has('follow_up_status')) {
+      insertPayload.follow_up_status = dbStatus;
+    }
+    if (cols.size === 0 || cols.has('status')) {
+      insertPayload.status = dbStatus;
+    }
+
+    let { error } = await supabase.from('Airwireless').insert([insertPayload]);
+
+    if (
+      error &&
+      (error.code === '42703' ||
+        error.code === 'PGRST204' ||
+        error.message?.toLowerCase().includes('column'))
+    ) {
+      const { follow_up_status: _f, ...withoutFollowUp } = insertPayload;
+      if (withoutFollowUp.status === undefined) {
+        withoutFollowUp.status = dbStatus;
+      }
+      const fallbackRes = await supabase.from('Airwireless').insert([withoutFollowUp]);
+      error = fallbackRes.error;
+    }
 
     if (error) {
       console.error('Supabase add record error on Airwireless:', error);
@@ -798,6 +958,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       {/* Top Header with Stats and Staff selector */}
       <CrmHeader
         onBackToLanding={onBackToLanding}
+        onNavigateToPublic={onNavigateToPublic}
         staffMembers={staffMembers}
         currentStaff={currentStaff}
         onSelectStaff={onSelectStaff}
@@ -807,7 +968,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         clawbacksCount={clawbackAccounts.length}
         totalCommissionsPaid={totalCommissionsPaid}
         clawbackAlertsCount={clawbackAccounts.length}
-        onOpenClawbackView={() => setActiveTab('commissions')}
+        onOpenClawbackView={() => handleTabChange('commissions')}
       />
 
       {/* Main Container */}
@@ -816,13 +977,14 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         {/* Navigation Tabs Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4">
           
-          {/* Main 5 Tabs */}
+          {/* Main Tabs */}
           <div className="flex items-center gap-1.5 p-1 bg-slate-200/70 rounded-xl overflow-x-auto">
             
             {/* 1. Leads View */}
             <button
-              onClick={() => setActiveTab('leads')}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+              type="button"
+              onClick={() => handleTabChange('leads')}
+              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === 'leads'
                   ? 'bg-white text-emerald-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -837,8 +999,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
             {/* 2. Active Lines View */}
             <button
-              onClick={() => setActiveTab('active_lines')}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+              type="button"
+              onClick={() => handleTabChange('active_lines')}
+              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === 'active_lines'
                   ? 'bg-white text-emerald-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -853,8 +1016,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
             {/* 3. Non-Active Lines View */}
             <button
-              onClick={() => setActiveTab('non_active_lines')}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+              type="button"
+              onClick={() => handleTabChange('non_active_lines')}
+              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === 'non_active_lines'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -875,8 +1039,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             {/* 4. Monthly Residuals Engine View (7% / 9% Volume Logic) - STRICTLY Master Admin Only */}
             {isMasterAdmin && (
               <button
-                onClick={() => setActiveTab('residuals')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                type="button"
+                onClick={() => handleTabChange('residuals')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                   activeTab === 'residuals'
                     ? 'bg-white text-emerald-950 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -892,8 +1057,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
             {/* 5. Upfront Commission & Clawbacks View (Personal for Reps, Master Ledger for Admin) */}
             <button
-              onClick={() => setActiveTab('commissions')}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+              type="button"
+              onClick={() => handleTabChange('commissions')}
+              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === 'commissions'
                   ? 'bg-white text-emerald-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -911,8 +1077,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             {/* 6. Staff & Variable Commission Multipliers (Master Admin Only) */}
             {isMasterAdmin && (
               <button
-                onClick={() => setActiveTab('staff')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                type="button"
+                onClick={() => handleTabChange('staff')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                   activeTab === 'staff'
                     ? 'bg-white text-emerald-950 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -929,8 +1096,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             {/* 7. CMS Editor View (Admin Only) */}
             {(isMasterAdmin || currentStaff.role === 'admin') && (
               <button
-                onClick={() => setActiveTab('cms')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                type="button"
+                onClick={() => handleTabChange('cms')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                   activeTab === 'cms'
                     ? 'bg-white text-emerald-950 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -944,8 +1112,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             {/* 8. Master Admin Recycle Bin (Deleted Items) */}
             {isMasterAdmin && (
               <button
-                onClick={() => setActiveTab('deleted_items')}
-                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                type="button"
+                onClick={() => handleTabChange('deleted_items')}
+                className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                   activeTab === 'deleted_items'
                     ? 'bg-rose-50 text-rose-950 border border-rose-200 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -970,7 +1139,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setIsExcelExportModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50/90 hover:bg-emerald-100 px-3.5 py-2 text-xs font-bold text-emerald-950 transition-colors shadow-2xs"
+                className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50/90 hover:bg-emerald-100 px-3.5 py-2 text-xs font-bold text-emerald-950 transition-colors shadow-2xs cursor-pointer"
                 title="Excel Export Module (.xlsx) - Master Admin Exclusive"
               >
                 <FileSpreadsheet className="h-4 w-4 text-emerald-700" />
@@ -996,20 +1165,22 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
             )}
 
             <button
+              type="button"
               onClick={() => setIsNewModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-[#0F3E2E] hover:bg-[#14533D] px-3.5 py-2 text-xs font-bold text-white transition-colors shadow-2xs"
+              className="flex items-center gap-1.5 rounded-xl bg-[#0F3E2E] hover:bg-[#14533D] px-3.5 py-2 text-xs font-bold text-white transition-colors shadow-2xs cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               <span>Add Lead / Line</span>
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 if (window.confirm('Reset database to initial sample records (leads, active lines, and clawbacks)?')) {
                   onResetData();
                 }
               }}
-              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
               title="Reset Sample Data"
             >
               <RefreshCw className="h-3.5 w-3.5" />
@@ -1090,117 +1261,125 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           </div>
         )}
 
-        {/* View Content based on active tab */}
-        {activeTab === 'leads' && (
-          <LeadsTable
-            leads={filteredDataset}
-            staffMembers={staffMembers}
-            currentStaff={currentStaff}
-            onOpenCustomer={(customer) => setSelectedCustomer(customer)}
-            onUpdateStatus={handleUpdateLeadStatus}
-            onQuickActivate={handleQuickActivate}
-            onDeactivateLead={handleDeactivateLine}
-            onDeleteLead={handleDeleteLead}
-            onAssignLead={handleAssignLead}
-            onRefreshLeads={refreshData}
-            isRefreshing={isRefreshingLeads}
-            lastRefreshedAt={lastRefreshedAt}
-            dbFetchError={dbFetchError}
-            selectedIds={selectedIds}
-            onToggleSelect={handleToggleSelectLead}
-            onToggleSelectAll={handleToggleSelectAllLeads}
-            onClearSelection={() => setSelectedIds([])}
-            onBulkDelete={handleBulkDeleteLeads}
-            onBulkAssign={handleBulkAssignLeads}
-            isBulkProcessing={isBulkProcessing}
-            bulkActionNotice={bulkActionNotice}
-            onDismissNotice={() => setBulkActionNotice(null)}
-          />
-        )}
+        {/* View Content based on active tab (isolated with ErrorBoundary so navigation is never blocked) */}
+        <CrmErrorBoundary
+          resetKey={activeTab}
+          sectionLabel="Staff Portal View"
+          onRetry={refreshData}
+          fallbackActionLabel="Back to Leads"
+          onFallbackAction={() => handleTabChange('leads')}
+        >
+          {activeTab === 'leads' && (
+            <LeadsTable
+              leads={filteredDataset}
+              staffMembers={staffMembers}
+              currentStaff={currentStaff}
+              onOpenCustomer={(customer) => setSelectedCustomer(customer)}
+              onUpdateStatus={handleUpdateLeadStatus}
+              onQuickActivate={handleQuickActivate}
+              onDeactivateLead={handleDeactivateLine}
+              onDeleteLead={handleDeleteLead}
+              onAssignLead={handleAssignLead}
+              onRefreshLeads={refreshData}
+              isRefreshing={isRefreshingLeads}
+              lastRefreshedAt={lastRefreshedAt}
+              dbFetchError={dbFetchError}
+              selectedIds={selectedIds}
+              onToggleSelect={handleToggleSelectLead}
+              onToggleSelectAll={handleToggleSelectAllLeads}
+              onClearSelection={() => setSelectedIds([])}
+              onBulkDelete={handleBulkDeleteLeads}
+              onBulkAssign={handleBulkAssignLeads}
+              isBulkProcessing={isBulkProcessing}
+              bulkActionNotice={bulkActionNotice}
+              onDismissNotice={() => setBulkActionNotice(null)}
+            />
+          )}
 
-        {activeTab === 'active_lines' && (
-          <LinesTable
-            lines={filteredDataset}
-            type="active"
-            isMasterAdmin={isMasterAdmin}
-            staffMembers={staffMembers}
-            onOpenCustomer={(customer) => setSelectedCustomer(customer)}
-            onActivateLine={handleQuickActivate}
-            onDeactivateLine={handleDeactivateLine}
-            onDeleteLine={handleDeleteLead}
-            onAssignLead={handleAssignLead}
-            isProcessing={isBulkProcessing}
-            actionNotice={bulkActionNotice}
-            onDismissNotice={() => setBulkActionNotice(null)}
-          />
-        )}
+          {activeTab === 'active_lines' && (
+            <LinesTable
+              lines={filteredDataset}
+              type="active"
+              isMasterAdmin={isMasterAdmin}
+              staffMembers={staffMembers}
+              onOpenCustomer={(customer) => setSelectedCustomer(customer)}
+              onActivateLine={handleQuickActivate}
+              onDeactivateLine={handleDeactivateLine}
+              onDeleteLine={handleDeleteLead}
+              onAssignLead={handleAssignLead}
+              isProcessing={isBulkProcessing}
+              actionNotice={bulkActionNotice}
+              onDismissNotice={() => setBulkActionNotice(null)}
+            />
+          )}
 
-        {activeTab === 'non_active_lines' && (
-          <LinesTable
-            lines={filteredDataset}
-            type="non_active"
-            isMasterAdmin={isMasterAdmin}
-            staffMembers={staffMembers}
-            onOpenCustomer={(customer) => setSelectedCustomer(customer)}
-            onActivateLine={handleQuickActivate}
-            onDeactivateLine={handleDeactivateLine}
-            onDeleteLine={handleDeleteLead}
-            onAssignLead={handleAssignLead}
-            isProcessing={isBulkProcessing}
-            actionNotice={bulkActionNotice}
-            onDismissNotice={() => setBulkActionNotice(null)}
-          />
-        )}
+          {activeTab === 'non_active_lines' && (
+            <LinesTable
+              lines={filteredDataset}
+              type="non_active"
+              isMasterAdmin={isMasterAdmin}
+              staffMembers={staffMembers}
+              onOpenCustomer={(customer) => setSelectedCustomer(customer)}
+              onActivateLine={handleQuickActivate}
+              onDeactivateLine={handleDeactivateLine}
+              onDeleteLine={handleDeleteLead}
+              onAssignLead={handleAssignLead}
+              isProcessing={isBulkProcessing}
+              actionNotice={bulkActionNotice}
+              onDismissNotice={() => setBulkActionNotice(null)}
+            />
+          )}
 
-        {activeTab === 'residuals' && isMasterAdmin && (
-          <ResidualEngine
-            customers={mergedDatabaseCustomers}
-            isMasterAdmin={isMasterAdmin}
-            currentStaffName={currentStaff.name}
-            onRefreshData={refreshData}
-          />
-        )}
+          {activeTab === 'residuals' && isMasterAdmin && (
+            <ResidualEngine
+              customers={mergedDatabaseCustomers}
+              isMasterAdmin={isMasterAdmin}
+              currentStaffName={currentStaff.name}
+              onRefreshData={refreshData}
+            />
+          )}
 
-        {activeTab === 'commissions' && (
-          <ClawbackTracker
-            customers={mergedDatabaseCustomers}
-            staffMembers={staffMembers}
-            currentStaff={currentStaff}
-            onOpenCustomer={(customer) => setSelectedCustomer(customer)}
-            onUpdateCommissionStatus={handleUpdateCommissionStatus}
-            onUpdateCustomers={onUpdateCustomers}
-            onUpdateStaffList={onUpdateStaffList}
-          />
-        )}
+          {activeTab === 'commissions' && (
+            <ClawbackTracker
+              customers={mergedDatabaseCustomers}
+              staffMembers={staffMembers}
+              currentStaff={currentStaff}
+              onOpenCustomer={(customer) => setSelectedCustomer(customer)}
+              onUpdateCommissionStatus={handleUpdateCommissionStatus}
+              onUpdateCustomers={onUpdateCustomers}
+              onUpdateStaffList={onUpdateStaffList}
+            />
+          )}
 
-        {activeTab === 'staff' && isMasterAdmin && (
-          <StaffManagement
-            staffMembers={staffMembers}
-            currentStaff={currentStaff}
-            customers={mergedDatabaseCustomers}
-            onUpdateCustomers={onUpdateCustomers}
-            onUpdateStaffList={onUpdateStaffList || ((l) => TelecomStorage.saveStaff(l))}
-          />
-        )}
+          {activeTab === 'staff' && isMasterAdmin && (
+            <StaffManagement
+              staffMembers={staffMembers}
+              currentStaff={currentStaff}
+              customers={mergedDatabaseCustomers}
+              onUpdateCustomers={onUpdateCustomers}
+              onUpdateStaffList={onUpdateStaffList || ((l) => TelecomStorage.saveStaff(l))}
+            />
+          )}
 
-        {activeTab === 'cms' && (isMasterAdmin || currentStaff.role === 'admin') && (
-          <CmsEditor
-            cms={cms}
-            plans={plans}
-            onSaveCms={onSaveCms}
-            onSavePlans={onSavePlans}
-            onPreviewSite={onBackToLanding}
-          />
-        )}
+          {activeTab === 'cms' && (isMasterAdmin || currentStaff.role === 'admin') && (
+            <CmsEditor
+              cms={cms}
+              plans={plans}
+              onSaveCms={onSaveCms}
+              onSavePlans={onSavePlans}
+              onPreviewSite={onNavigateToPublic || onBackToLanding}
+            />
+          )}
 
-        {activeTab === 'deleted_items' && isMasterAdmin && (
-          <DeletedItemsView
-            deletedItems={deletedItems}
-            onRestore={handleRestore}
-            onHardDelete={handleHardDelete}
-            masterAdminPassword={currentStaff.password || 'AdminTemp2026!'}
-          />
-        )}
+          {activeTab === 'deleted_items' && isMasterAdmin && (
+            <DeletedItemsView
+              deletedItems={deletedItems}
+              onRestore={handleRestore}
+              onHardDelete={handleHardDelete}
+              masterAdminPassword={currentStaff.password || 'AdminTemp2026!'}
+            />
+          )}
+        </CrmErrorBoundary>
 
       </div>
 

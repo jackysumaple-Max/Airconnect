@@ -4,6 +4,7 @@ import { StaffRep } from '../../types/telecom';
 
 interface CrmHeaderProps {
   onBackToLanding: () => void;
+  onNavigateToPublic?: () => void;
   staffMembers: StaffRep[];
   currentStaff: StaffRep;
   onSelectStaff: (staff: StaffRep) => void;
@@ -18,15 +19,16 @@ interface CrmHeaderProps {
 
 export const CrmHeader: React.FC<CrmHeaderProps> = ({
   onBackToLanding,
-  staffMembers,
+  onNavigateToPublic,
+  staffMembers = [],
   currentStaff,
   onSelectStaff,
-  leadsCount,
-  activeLinesCount,
-  nonActiveLinesCount,
-  clawbacksCount,
-  totalCommissionsPaid,
-  clawbackAlertsCount,
+  leadsCount = 0,
+  activeLinesCount = 0,
+  nonActiveLinesCount = 0,
+  clawbacksCount = 0,
+  totalCommissionsPaid = 0,
+  clawbackAlertsCount = 0,
   onOpenClawbackView,
 }) => {
   return (
@@ -41,8 +43,9 @@ export const CrmHeader: React.FC<CrmHeaderProps> = ({
             </span>
           </div>
           <button
+            type="button"
             onClick={onOpenClawbackView}
-            className="ml-4 shrink-0 rounded bg-amber-950 px-2.5 py-1 text-[11px] font-bold text-amber-200 hover:bg-black transition-colors"
+            className="ml-4 shrink-0 rounded bg-amber-950 px-2.5 py-1 text-[11px] font-bold text-amber-200 hover:bg-black transition-colors cursor-pointer"
           >
             Review Clawbacks
           </button>
@@ -55,8 +58,9 @@ export const CrmHeader: React.FC<CrmHeaderProps> = ({
         {/* Left: Brand + Back to Site */}
         <div className="flex items-center gap-3">
           <button
-            onClick={onBackToLanding}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            type="button"
+            onClick={onNavigateToPublic || onBackToLanding}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
             title="Return to customer landing page"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -84,14 +88,16 @@ export const CrmHeader: React.FC<CrmHeaderProps> = ({
         {/* Right: Active Staff Selector + Logout */}
         <div className="flex items-center gap-3">
           <div className="text-right hidden sm:block">
-            <div className="text-xs font-bold text-slate-800">{currentStaff.name}</div>
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider">{currentStaff.role.replace('_', ' ')}</div>
+            <div className="text-xs font-bold text-slate-800">{currentStaff?.name || 'Staff Member'}</div>
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider">
+              {String(currentStaff?.role || 'sales_rep').replace('_', ' ')}
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
             <UserCheck className="h-3.5 w-3.5 text-slate-500 ml-1.5" />
             <select
-              value={currentStaff.id}
+              value={currentStaff?.id || ''}
               onChange={(e) => {
                 const found = staffMembers.find((s) => s.id === e.target.value);
                 if (found) onSelectStaff(found);
@@ -107,8 +113,9 @@ export const CrmHeader: React.FC<CrmHeaderProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onBackToLanding}
-            className="flex items-center gap-1 text-xs font-semibold text-rose-700 hover:text-rose-900 px-2.5 py-1.5 rounded-lg hover:bg-rose-50 transition-colors"
+            className="flex items-center gap-1 text-xs font-semibold text-rose-700 hover:text-rose-900 px-2.5 py-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
             title="Log out of Staff Portal"
           >
             <span>Log out</span>
@@ -157,7 +164,7 @@ export const CrmHeader: React.FC<CrmHeaderProps> = ({
             </div>
             <div>
               <div className="font-extrabold text-emerald-900 tabular-nums">
-                ${totalCommissionsPaid.toFixed(2)}
+                ${Number(totalCommissionsPaid || 0).toFixed(2)}
               </div>
               <div className="text-[11px] text-slate-500">Commissions Paid</div>
             </div>

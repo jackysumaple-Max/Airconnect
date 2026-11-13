@@ -43,8 +43,8 @@ interface LeadsTableProps {
 }
 
 export const LeadsTable: React.FC<LeadsTableProps> = ({
-  leads,
-  staffMembers,
+  leads = [],
+  staffMembers = [],
   currentStaff,
   onOpenCustomer,
   onUpdateStatus,
@@ -56,7 +56,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   isRefreshing = false,
   lastRefreshedAt,
   dbFetchError,
-  selectedIds,
+  selectedIds = [],
   onToggleSelect,
   onToggleSelectAll,
   onClearSelection,
@@ -66,16 +66,20 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   bulkActionNotice,
   onDismissNotice,
 }) => {
+  const safeLeads = Array.isArray(leads) ? leads : [];
+  const safeStaffMembers = Array.isArray(staffMembers) ? staffMembers : [];
+  const safeSelectedIds = Array.isArray(selectedIds) ? selectedIds : [];
+
   const isAdmin =
-    currentStaff.role === 'admin' ||
-    currentStaff.role === 'super_admin' ||
-    Boolean(currentStaff.isMasterAdmin);
+    currentStaff?.role === 'admin' ||
+    currentStaff?.role === 'super_admin' ||
+    Boolean(currentStaff?.isMasterAdmin);
 
   const [bulkSelectedRep, setBulkSelectedRep] = useState<string>('');
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
 
-  const visibleLeadIds = leads.map((l) => l.id);
-  const selectedVisibleCount = visibleLeadIds.filter((id) => selectedIds.includes(id)).length;
+  const visibleLeadIds = safeLeads.map((l) => l.id).filter(Boolean);
+  const selectedVisibleCount = visibleLeadIds.filter((id) => safeSelectedIds.includes(id)).length;
   const allSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
   const someSelected = selectedVisibleCount > 0 && !allSelected;
 
@@ -86,18 +90,25 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   }, [someSelected]);
 
   useEffect(() => {
-    if (selectedIds.length === 0) {
-      setBulkSelectedRep('');
+    if (safeSelectedIds.length === 0) {
+      setBulkSelectedRep((prev) => (prev ? '' : prev));
     }
-  }, [selectedIds.length]);
+  }, [safeSelectedIds.length]);
+
+  const formatTime = (val?: string) => {
+    if (!val || typeof val !== 'string') return '--:--';
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return '--:--';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
 
   // Separate Unassigned leads count for header badge
-  const unassignedLeads = leads.filter(
+  const unassignedLeads = safeLeads.filter(
     (l) => l.salesRep === 'Unassigned' || !l.salesRep || l.salesRep === 'Direct / Web'
   );
 
   const handleBulkAssignClick = async () => {
-    if (!bulkSelectedRep || selectedIds.length === 0) return;
+    if (!bulkSelectedRep || safeSelectedIds.length === 0) return;
     await onBulkAssign(bulkSelectedRep);
     setBulkSelectedRep('');
   };
@@ -119,7 +130,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                 Live Supabase Feed (Airwireless)
               </span>
               <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 border border-emerald-200">
-                {leads.length} Leads Total
+                {safeLeads.length} Leads Total
               </span>
               <span className="rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 border border-amber-200">
                 {unassignedLeads.length} Inbound Unassigned
@@ -127,7 +138,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
               Live database query runs directly without device or user isolation. All phone and PC submissions sync here.
-              {lastRefreshedAt && (
+              {lastRefreshedAt instanceof Date && !isNaN(lastRefreshedAt.getTime()) && (
                 <span className="ml-1 text-slate-400 font-mono">
                   • Last refreshed: {lastRefreshedAt.toLocaleTimeString()}
                 </span>
@@ -197,11 +208,11 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
       )}
 
       {/* BULK ACTION BAR (Appears above the table when at least 1 lead is selected) */}
-      {selectedIds.length > 0 && (
+      {safeSelectedIds.length > 0 && (
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 rounded-2xl border-2 border-emerald-500/40 bg-[#0B2B20] text-white p-4 shadow-md animate-fade-in">
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center justify-center rounded-xl bg-emerald-400 text-[#061E14] font-black text-xs px-3 py-1">
-              {selectedIds.length} {selectedIds.length === 1 ? 'lead' : 'leads'} selected
+              {safeSelectedIds.length} {safeSelectedIds.length === 1 ? 'lead' : 'leads'} selected
             </span>
             {onClearSelection && (
               <button
@@ -232,7 +243,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                 <option value="Unassigned" className="text-slate-900">
                   Unassigned
                 </option>
-                {staffMembers.map((s) => (
+                {safeStaffMembers.map((s) => (
                   <option key={s.id} value={s.name} className="text-slate-900">
                     {s.name} ({s.commissionMultiplier}x)
                   </option>
@@ -269,10 +280,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-extrabold text-slate-900">
-                {isAdmin ? 'Master Leads Pipeline (Live Database)' : `${currentStaff.name}'s Leads`}
+                {isAdmin ? 'Master Leads Pipeline (Live Database)' : `${currentStaff?.name || 'Staff'}'s Leads`}
               </h3>
               <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 border border-emerald-200">
-                {leads.length} Total Leads
+                {safeLeads.length} Total Leads
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -293,7 +304,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
           )}
         </div>
 
-        {leads.length === 0 ? (
+        {safeLeads.length === 0 ? (
           <div className="p-12 text-center text-slate-400 text-xs">
             <Inbox className="h-10 w-10 text-slate-300 mx-auto mb-2" />
             <h4 className="font-bold text-slate-700 text-sm">No Leads in Airwireless Table</h4>
@@ -326,13 +337,18 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {leads.map((lead) => {
+                {safeLeads.map((lead, idx) => {
                   const followUp = lead.leadFollowUpStatus || 'new';
-                  const isSelected = selectedIds.includes(lead.id);
+                  const isSelected = Boolean(lead.id && safeSelectedIds.includes(lead.id));
+                  const currentRep = lead.salesRep || 'Unassigned';
+                  const hasCustomRepOption =
+                    Boolean(currentRep) &&
+                    currentRep !== 'Unassigned' &&
+                    !safeStaffMembers.some((s) => s.name === currentRep);
 
                   return (
                     <tr
-                      key={lead.id}
+                      key={lead.id || `lead-row-${idx}`}
                       onClick={() => onOpenCustomer(lead)}
                       className={`transition-colors cursor-pointer group ${
                         isSelected
@@ -348,8 +364,9 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          onChange={() => onToggleSelect(lead.id)}
-                          aria-label={`Select ${lead.fullName}`}
+                          disabled={!lead.id}
+                          onChange={() => lead.id && onToggleSelect(lead.id)}
+                          aria-label={`Select ${lead.fullName || 'lead'}`}
                           className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600 cursor-pointer accent-emerald-700"
                         />
                       </td>
@@ -357,10 +374,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                       {/* Name & ID */}
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-900 group-hover:text-emerald-800 transition-colors">
-                          {lead.fullName}
+                          {lead.fullName || 'Website Customer'}
                         </div>
                         <div className="font-mono text-[10px] text-slate-400 mt-0.5">
-                          {lead.id} · {new Date(lead.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {lead.id || 'pending-id'} · {formatTime(lead.submittedAt)}
                         </div>
                       </td>
 
@@ -399,13 +416,16 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                       <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                         {isAdmin ? (
                           <select
-                            value={lead.salesRep || 'Unassigned'}
+                            value={currentRep}
                             disabled={isBulkProcessing || !lead.id}
                             onChange={(e) => onAssignLead(lead.id, e.target.value)}
                             className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-800 outline-none hover:border-emerald-500 disabled:opacity-50 cursor-pointer"
                           >
                             <option value="Unassigned">● Unassigned</option>
-                            {staffMembers.map((s) => (
+                            {hasCustomRepOption && (
+                              <option value={currentRep}>{currentRep}</option>
+                            )}
+                            {safeStaffMembers.map((s) => (
                               <option key={s.id} value={s.name}>
                                 {s.name} ({s.commissionMultiplier}x)
                               </option>
@@ -413,7 +433,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
                           </select>
                         ) : (
                           <div>
-                            <span className="font-bold text-slate-800">{lead.salesRep}</span>
+                            <span className="font-bold text-slate-800">{currentRep}</span>
                             <div className="text-[10px] text-slate-400">{lead.referralSource || 'Direct'}</div>
                           </div>
                         )}

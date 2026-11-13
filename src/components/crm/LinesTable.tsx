@@ -30,7 +30,7 @@ interface LinesTableProps {
 }
 
 export const LinesTable: React.FC<LinesTableProps> = ({
-  lines,
+  lines = [],
   type,
   isMasterAdmin = false,
   staffMembers = [],
@@ -43,6 +43,9 @@ export const LinesTable: React.FC<LinesTableProps> = ({
   actionNotice,
   onDismissNotice,
 }) => {
+  const safeLines = Array.isArray(lines) ? lines : [];
+  const safeStaffMembers = Array.isArray(staffMembers) ? staffMembers : [];
+
   const noticeBanner = actionNotice ? (
     <div
       className={`mb-4 flex items-center justify-between gap-3 rounded-2xl border p-3.5 text-xs shadow-2xs ${
@@ -72,7 +75,7 @@ export const LinesTable: React.FC<LinesTableProps> = ({
     </div>
   ) : null;
 
-  if (lines.length === 0) {
+  if (safeLines.length === 0) {
     return (
       <div>
         {noticeBanner}
@@ -115,7 +118,7 @@ export const LinesTable: React.FC<LinesTableProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {lines.map((customer) => {
+              {safeLines.map((customer, idx) => {
                 const daysActive = customer.activationStartDate
                   ? calculateDaysBetween(
                       customer.activationStartDate,
@@ -126,10 +129,15 @@ export const LinesTable: React.FC<LinesTableProps> = ({
                 const isWithin180Days = customer.activationStartDate ? daysActive <= 180 : false;
                 const hasClawback =
                   customer.commission?.isClawbackFlagged || (type === 'non_active' && isWithin180Days);
+                const currentRep = customer.salesRep || 'Unassigned';
+                const hasCustomRepOption =
+                  Boolean(currentRep) &&
+                  currentRep !== 'Unassigned' &&
+                  !safeStaffMembers.some((s) => s.name === currentRep);
 
                 return (
                   <tr
-                    key={customer.id}
+                    key={customer.id || `line-row-${idx}`}
                     onClick={() => onOpenCustomer(customer)}
                     className={`hover:bg-slate-50/90 transition-colors cursor-pointer group ${
                       hasClawback ? 'bg-rose-50/30' : ''
@@ -223,15 +231,18 @@ export const LinesTable: React.FC<LinesTableProps> = ({
 
                     {/* Sales Rep */}
                     <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
-                      {isMasterAdmin && onAssignLead && staffMembers.length > 0 ? (
+                      {isMasterAdmin && onAssignLead && safeStaffMembers.length > 0 ? (
                         <select
-                          value={customer.salesRep || 'Unassigned'}
+                          value={currentRep}
                           disabled={isProcessing || !customer.id}
                           onChange={(e) => onAssignLead(customer.id, e.target.value)}
                           className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-800 outline-none hover:border-emerald-500 disabled:opacity-50 cursor-pointer"
                         >
                           <option value="Unassigned">● Unassigned</option>
-                          {staffMembers.map((s) => (
+                          {hasCustomRepOption && (
+                            <option value={currentRep}>{currentRep}</option>
+                          )}
+                          {safeStaffMembers.map((s) => (
                             <option key={s.id} value={s.name}>
                               {s.name} ({s.commissionMultiplier}x)
                             </option>

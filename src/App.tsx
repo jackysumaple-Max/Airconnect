@@ -10,6 +10,7 @@ import { HowItWorks } from './components/landing/HowItWorks';
 import { FaqSection } from './components/landing/FaqSection';
 import { Footer } from './components/landing/Footer';
 import { CrmDashboard } from './components/crm/CrmDashboard';
+import { CrmErrorBoundary } from './components/crm/CrmErrorBoundary';
 import { StaffAuthGate } from './components/crm/StaffAuthGate';
 import {
   insertLeadToSupabase,
@@ -206,11 +207,11 @@ export default function App() {
     setAuthStaff(staff);
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     TelecomStorage.setAuthSession(null);
     setAuthStaff(null);
     navigateToPublic();
-  };
+  }, [navigateToPublic]);
 
   // Handlers for Leads and Customer Updates (Frontend to Backend + Supabase)
   const handleLeadSubmit = async (leadData: {
@@ -315,10 +316,10 @@ export default function App() {
     }
   };
 
-  const handleUpdateCustomerList = (updated: CustomerRecord[]) => {
+  const handleUpdateCustomerList = useCallback((updated: CustomerRecord[]) => {
     TelecomStorage.saveCustomers(updated);
     setCustomers(updated);
-  };
+  }, []);
 
   const handleSelectPromoPlan = () => {
     setSelectedPlanId('ctexcel-27-50gb');
@@ -340,33 +341,48 @@ export default function App() {
   if (isStaffRoute) {
     if (!authStaff) {
       return (
-        <StaffAuthGate
-          onSuccess={handleAuthSuccess}
-          onExitToPublic={navigateToPublic}
-        />
+        <CrmErrorBoundary
+          resetKey="staff-auth"
+          sectionLabel="Staff Sign-In"
+          fallbackActionLabel="Return to Public Website"
+          onFallbackAction={navigateToPublic}
+        >
+          <StaffAuthGate
+            onSuccess={handleAuthSuccess}
+            onExitToPublic={navigateToPublic}
+          />
+        </CrmErrorBoundary>
       );
     }
 
     return (
-      <CrmDashboard
-        customers={customers}
-        plans={plans}
-        cms={cms}
-        staffMembers={staffMembers}
-        currentStaff={authStaff}
-        onSelectStaff={setAuthStaff}
-        onBackToLanding={handleLogout}
-        onSaveCustomer={handleSaveCustomer}
-        onDeleteCustomer={handleDeleteCustomer}
-        onAddCustomer={handleAddManualCustomer}
-        onSaveCms={handleSaveCms}
-        onSavePlans={handleSavePlans}
-        onResetData={handleResetData}
-        onUpdateStaffList={handleUpdateStaffList}
-        onUpdateCustomers={handleUpdateCustomerList}
-        onRestoreCustomers={handleRestoreCustomers}
-        onHardDeleteCustomers={handleHardDeleteCustomers}
-      />
+      <CrmErrorBoundary
+        resetKey={authStaff.id}
+        sectionLabel="Staff Portal"
+        fallbackActionLabel="Return to Public Website"
+        onFallbackAction={navigateToPublic}
+      >
+        <CrmDashboard
+          customers={customers}
+          plans={plans}
+          cms={cms}
+          staffMembers={staffMembers}
+          currentStaff={authStaff}
+          onSelectStaff={setAuthStaff}
+          onBackToLanding={handleLogout}
+          onNavigateToPublic={navigateToPublic}
+          onSaveCustomer={handleSaveCustomer}
+          onDeleteCustomer={handleDeleteCustomer}
+          onAddCustomer={handleAddManualCustomer}
+          onSaveCms={handleSaveCms}
+          onSavePlans={handleSavePlans}
+          onResetData={handleResetData}
+          onUpdateStaffList={handleUpdateStaffList}
+          onUpdateCustomers={handleUpdateCustomerList}
+          onRestoreCustomers={handleRestoreCustomers}
+          onHardDeleteCustomers={handleHardDeleteCustomers}
+        />
+      </CrmErrorBoundary>
     );
   }
 

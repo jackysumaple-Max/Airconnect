@@ -376,12 +376,36 @@ export async function insertLeadToSupabase(lead: CustomerRecord): Promise<{
   }
 }
 
+function safeString(val: unknown, fallback: string = ''): string {
+  if (typeof val === 'string') return val;
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  return fallback;
+}
+
+function safeIsoDate(val: unknown, fallback?: string): string {
+  const raw = safeString(val).trim();
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) return raw;
+  }
+  return fallback ?? new Date().toISOString();
+}
+
+const VALID_FOLLOW_UP_STAGES = new Set([
+  'new',
+  'contacted',
+  'callback_scheduled',
+  'qualified',
+  'lost',
+]);
+
 /**
  * Normalizes database status values ('Active', 'active_line', 'Non-Active', 'non_active_line', 'lead')
  * into canonical CRM CustomerStatus literals.
  */
 export function normalizeAirwirelessStatus(rawStatus: unknown): CustomerRecord['status'] {
-  const normalized = String(rawStatus ?? '')
+  const normalized = safeString(rawStatus)
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
@@ -413,48 +437,86 @@ export function toAirwirelessDbStatus(status: CustomerRecord['status'] | string)
 
 /**
  * Maps a raw row from the Supabase 'Airwireless' table into a CustomerRecord,
- * preserving the primary key UUID `id`.
+ * preserving the primary key UUID `id` and safeguarding against missing or non-string fields.
  */
 export function mapAirwirelessRowToCustomerRecord(item: any): CustomerRecord {
-  const canonicalStatus = normalizeAirwirelessStatus(item?.status);
-  const submittedAt = item?.submitted_at || item?.created_at || new Date().toISOString();
-  const monthlyPrice = Number(item?.monthly_plan_price || item?.monthlyPlanPrice || 27);
+  const followUpStatusNorm = normalizeAirwirelessStatus(item?.follow_up_status);
+  const statusColNorm = normalizeAirwirelessStatus(item?.status);
+
+  // Check both follow_up_status and status for Active / Non-Active lifecycle state
+  const canonicalStatus: CustomerRecord['status'] =
+    followUpStatusNorm === 'active_line' || statusColNorm === 'active_line'
+      ? 'active_line'
+      : followUpStatusNorm === 'non_active_line' || statusColNorm === 'non_active_line'
+      ? 'non_active_line'
+      : 'lead';
+
+  const submittedAt = safeIsoDate(item?.submitted_at || item?.created_at);
+  const parsedPrice = Number(item?.monthly_plan_price ?? item?.monthlyPlanPrice ?? 27);
+  const monthlyPrice = Number.isFinite(parsedPrice) && parsedPrice > 0 ? parsedPrice : 27;
+
+  const rawName = safeString(item?.name).trim();
+  const firstName =
+    safeString(item?.first_name || item?.firstName).trim() ||
+    (rawName ? rawName.split(/\s+/)[0] : '');
+  const lastName =
+    safeString(item?.last_name || item?.lastName).trim() ||
+    (rawName ? rawName.split(/\s+/).slice(1).join(' ') : '');
+  const fullName =
+    safeString(item?.full_name || item?.fullName).trim() ||
+    rawName ||
+    `${firstName} ${lastName}`.trim() ||
+    'Website Customer';
+
+  const rawStage = safeString(
+    item?.lead_follow_up_status ?? item?.follow_up_status ?? item?.leadFollowUpStatus
+  )
+    .trim()
+    .toLowerCase();
+  const leadFollowUpStatus = (VALID_FOLLOW_UP_STAGES.has(rawStage)
+    ? rawStage
+    : 'new') as CustomerRecord['leadFollowUpStatus'];
 
   return {
     id: item?.id !== undefined && item?.id !== null ? String(item.id) : '',
     status: canonicalStatus,
-    firstName: item?.first_name || item?.firstName || item?.name?.split(' ')[0] || '',
-    lastName: item?.last_name || item?.lastName || item?.name?.split(' ').slice(1).join(' ') || '',
-    fullName:
-      item?.full_name ||
-      item?.fullName ||
-      item?.name ||
-      `${item?.first_name || ''} ${item?.last_name || ''}`.trim() ||
-      'Website Customer',
-    email: item?.email || '',
-    phone: item?.phone || '',
-    preferredPlanId: item?.preferred_plan_id || item?.preferredPlanId || 'ctexcel-27-50gb',
-    preferredPlanName: item?.preferred_plan_name || item?.preferredPlanName || item?.plan || '$27 / 50GB 5G Plan',
+    firstName,
+    lastName,
+    fullName,
+    email: safeString(item?.email),
+    phone: safeString(item?.phone),
+    preferredPlanId: safeString(item?.preferred_plan_id || item?.preferredPlanId, 'ctexcel-27-50gb'),
+    preferredPlanName: safeString(
+      item?.preferred_plan_name || item?.preferredPlanName || item?.plan,
+      '$27 / 50GB 5G Plan'
+    ),
     monthlyPlanPrice: monthlyPrice,
-    salesRep: item?.sales_rep || item?.assigned_specialist || item?.salesRep || 'Unassigned',
-    referralSource: item?.referral_source || item?.referralSource || 'Website Lead Capture',
+    salesRep: safeString(
+      item?.sales_rep || item?.assigned_specialist || item?.salesRep,
+      'Unassigned'
+    ),
+    referralSource: safeString(
+      item?.referral_source || item?.referralSource,
+      'Website Lead Capture'
+    ),
     submittedAt,
     activationStartDate:
-      item?.activation_start_date ||
-      item?.activationStartDate ||
+      safeString(item?.activation_start_date || item?.activationStartDate) ||
       (canonicalStatus === 'active_line' ? submittedAt : undefined),
     deactivationDate:
-      item?.deactivation_date ||
-      item?.deactivationDate ||
-      (canonicalStatus === 'non_active_line' ? (item?.updated_at || submittedAt) : undefined),
-    callbackTimePreference: item?.callback_time_preference || item?.callbackTimePreference || 'As soon as possible',
-    notes: item?.notes || '',
-    leadFollowUpStatus: item?.lead_follow_up_status || item?.leadFollowUpStatus || 'new',
+      safeString(item?.deactivation_date || item?.deactivationDate) ||
+      (canonicalStatus === 'non_active_line' ? safeString(item?.updated_at, submittedAt) : undefined),
+    callbackTimePreference: safeString(
+      item?.callback_time_preference || item?.callbackTimePreference,
+      'As soon as possible'
+    ),
+    notes: safeString(item?.notes),
+    leadFollowUpStatus,
     isDeleted: Boolean(item?.is_deleted),
-    deletedAt: item?.deleted_at,
-    deletedBy: item?.deleted_by,
+    deletedAt: item?.deleted_at ? safeString(item.deleted_at) : undefined,
+    deletedBy: item?.deleted_by ? safeString(item.deleted_by) : undefined,
     idVerification: {
-      status: item?.id_verification_status || (canonicalStatus === 'active_line' ? 'verified' : 'unverified'),
+      status: (safeString(item?.id_verification_status) as any) || (canonicalStatus === 'active_line' ? 'verified' : 'unverified'),
     },
     commission: {
       amount: Number((monthlyPrice * 1.0).toFixed(2)),
