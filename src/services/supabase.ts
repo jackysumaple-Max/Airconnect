@@ -1052,13 +1052,21 @@ export async function restoreCustomerInSupabase(id: string) {
  * 6. HARD DELETE (PERMANENT PURGE) IN SUPABASE:
  * Deletes rows permanently from Airwireless table by primary key id
  */
-export async function hardDeleteCustomersInSupabase(ids: string[]) {
+export async function hardDeleteCustomersInSupabase(ids: unknown[]) {
   if (!isSupabaseConfigured) return { success: true, error: null };
 
-  const cleanIds = Array.from(
+  const cleanIds: string[] = Array.from(
     new Set(
       (Array.isArray(ids) ? ids : [])
-        .map((id) => (typeof id === 'string' || typeof id === 'number' ? String(id).trim() : ''))
+        .map((entry: unknown) => {
+          if (typeof entry === 'string') return entry.trim();
+          if (typeof entry === 'number' && Number.isFinite(entry)) return String(entry);
+          if (entry && typeof entry === 'object' && 'id' in entry) {
+            const inner = (entry as { id?: unknown }).id;
+            return typeof inner === 'string' ? inner.trim() : '';
+          }
+          return '';
+        })
         .filter(Boolean)
     )
   );
@@ -1075,10 +1083,18 @@ export async function hardDeleteCustomersInSupabase(ids: string[]) {
       return { success: false, error };
     }
     if (Array.isArray(data) && data.length === 0) {
-      return {
-        success: false,
-        error: new Error('Supabase returned 0 deleted rows. Check Airwireless DELETE RLS policy.'),
-      };
+      const { data: stillPresent } = await supabase
+        .from('Airwireless')
+        .select('id')
+        .in('id', cleanIds);
+      if (Array.isArray(stillPresent) && stillPresent.length > 0) {
+        return {
+          success: false,
+          error: new Error(
+            'Delete blocked by database policy (matching row(s) still present). Check Airwireless DELETE RLS policy.'
+          ),
+        };
+      }
     }
   } catch (err) {
     return { success: false, error: err };

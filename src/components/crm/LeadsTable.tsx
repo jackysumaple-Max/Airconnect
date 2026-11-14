@@ -78,10 +78,18 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({
   const [bulkSelectedRep, setBulkSelectedRep] = useState<string>('');
   const selectAllCheckboxRef = useRef<HTMLInputElement | null>(null);
 
-  const getLeadId = (lead: CustomerRecord): string =>
-    typeof lead?.id === 'string' ? lead.id.trim() : '';
+  const getLeadId = (lead: CustomerRecord): string => {
+    const raw: unknown = lead?.id;
+    if (typeof raw === 'string') return raw.trim();
+    if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+    if (raw && typeof raw === 'object' && 'id' in raw) {
+      const inner = (raw as { id?: unknown }).id;
+      return typeof inner === 'string' ? inner.trim() : '';
+    }
+    return '';
+  };
 
-  const visibleLeadIds = safeLeads.map(getLeadId).filter(Boolean);
+  const visibleLeadIds: string[] = Array.from(new Set(safeLeads.map(getLeadId).filter(Boolean)));
   const selectedVisibleCount = visibleLeadIds.filter((id) => safeSelectedIds.includes(id)).length;
   const allSelected = visibleLeadIds.length > 0 && selectedVisibleCount === visibleLeadIds.length;
   const someSelected = selectedVisibleCount > 0 && !allSelected;

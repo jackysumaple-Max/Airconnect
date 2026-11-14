@@ -126,11 +126,22 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     | null
   >(null);
 
-  const normalizeRecordId = useCallback((val: unknown): string => {
+  const extractFlatId = useCallback((val: unknown): string => {
     if (typeof val === 'string') return val.trim();
     if (typeof val === 'number' && Number.isFinite(val)) return String(val);
+    if (val && typeof val === 'object' && 'id' in val) {
+      const inner = (val as { id?: unknown }).id;
+      if (typeof inner === 'string') return inner.trim();
+      if (typeof inner === 'number' && Number.isFinite(inner)) return String(inner);
+    }
     return '';
   }, []);
+
+  const normalizeIdArray = useCallback(
+    (values: unknown[]): string[] =>
+      Array.from(new Set((Array.isArray(values) ? values : []).map(extractFlatId).filter(Boolean))),
+    [extractFlatId]
+  );
 
   const onUpdateCustomersRef = useRef(onUpdateCustomers);
   onUpdateCustomersRef.current = onUpdateCustomers;
@@ -398,51 +409,49 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     searchQuery,
   ]);
 
-  // Row Selection Helpers (strictly store string `id` values, never phone numbers or lead objects)
+  // Row Selection Helpers (strictly store flat string `id` values, never phone numbers or lead objects)
   const handleToggleSelectLead = useCallback(
     (rawId: string) => {
-      const cleanId = normalizeRecordId(rawId);
+      const cleanId = extractFlatId(rawId);
       if (!cleanId) return;
       setSelectedIds((prev) => {
-        const cleanPrev = Array.from(new Set(prev.map(normalizeRecordId).filter(Boolean)));
+        const cleanPrev = normalizeIdArray(prev);
         return cleanPrev.includes(cleanId)
           ? cleanPrev.filter((item) => item !== cleanId)
           : [...cleanPrev, cleanId];
       });
     },
-    [normalizeRecordId]
+    [extractFlatId, normalizeIdArray]
   );
 
   const handleToggleSelectAllLeads = useCallback(
     (visibleLeadIds: string[]) => {
-      const normalizedVisible = Array.from(
-        new Set((Array.isArray(visibleLeadIds) ? visibleLeadIds : []).map(normalizeRecordId).filter(Boolean))
-      );
+      const normalizedVisible = normalizeIdArray(visibleLeadIds);
       setSelectedIds((prev) => {
-        const cleanPrev = Array.from(new Set(prev.map(normalizeRecordId).filter(Boolean)));
+        const cleanPrev = normalizeIdArray(prev);
         const allSelected =
           normalizedVisible.length > 0 && normalizedVisible.every((id) => cleanPrev.includes(id));
         return allSelected ? [] : normalizedVisible;
       });
     },
-    [normalizeRecordId]
+    [normalizeIdArray]
   );
 
-  // Open in-app confirmation modal for Bulk Delete Selected Leads
-  const handleBulkDeleteLeads = () => {
-    const idsToDelete = Array.from(new Set(selectedIds.map(normalizeRecordId).filter(Boolean)));
-    if (idsToDelete.length === 0) return;
-    setPendingDelete({ mode: 'bulk', ids: idsToDelete });
+  // Bulk Delete Trigger: strictly maps selectedIds to a flat array of ID strings
+  const handleBulkDelete = () => {
+    const arrayOfStrings: string[] = normalizeIdArray(selectedIds);
+    if (arrayOfStrings.length === 0) return;
+    setPendingDelete({ mode: 'bulk', ids: arrayOfStrings });
   };
 
-  // Open in-app confirmation modal for Single-Row Permanent Delete
-  const handleDeleteLead = (record: CustomerRecord) => {
-    const leadId = normalizeRecordId(record?.id);
-    if (!leadId) {
+  // Single Delete Trigger: strictly extracts a flat string ID
+  const handleDelete = (record: CustomerRecord) => {
+    const flatId: string = extractFlatId(record?.id ?? record);
+    if (!flatId) {
       setBulkActionNotice({ type: 'error', message: 'Cannot delete record: missing primary key id.' });
       return;
     }
-    setPendingDelete({ mode: 'single', record, leadId });
+    setPendingDelete({ mode: 'single', record, leadId: flatId });
   };
 
   // Execute confirmed Supabase Delete targeting exact `id` column + immediate refreshData()
@@ -457,17 +466,17 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
     try {
       if (action.mode === 'bulk') {
-        const idsToDelete = Array.from(new Set(action.ids.map(normalizeRecordId).filter(Boolean)));
-        if (idsToDelete.length === 0) return;
+        const arrayOfStrings: string[] = normalizeIdArray(action.ids);
+        if (arrayOfStrings.length === 0) return;
 
         const { data, error } = await supabase
           .from('Airwireless')
           .delete()
-          .in('id', idsToDelete)
+          .in('id', arrayOfStrings)
           .select('id');
 
         if (error) {
-          console.error('Supabase bulk delete error on Airwireless:', error);
+          console.error('Supabase bulk delete error on Airwireless:', error, { arrayOfStrings });
           const msg = error.message || 'Failed to delete selected leads from Supabase.';
           setDbFetchError(msg);
           setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
@@ -475,18 +484,28 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         }
 
         if (Array.isArray(data) && data.length === 0) {
-          const msg =
-            'Supabase returned 0 deleted rows. Check that your DELETE RLS policy on Airwireless allows authenticated users and that the id values match.';
-          setDbFetchError(msg);
-          setBulkActionNotice({ type: 'error', message: msg });
-          await refreshData();
-          return;
+          // Verify whether rows still exist in Airwireless or were already deleted / blocked by RLS
+          const [{ data: stillPresent }, { data: sessionRes }] = await Promise.all([
+            supabase.from('Airwireless').select('id').in('id', arrayOfStrings),
+            supabase.auth.getSession(),
+          ]);
+
+          if (Array.isArray(stillPresent) && stillPresent.length > 0) {
+            const roleHint = sessionRes?.session
+              ? 'Your Supabase DELETE RLS policy on Airwireless ("Allow Admin Delete") may be missing or blocking authenticated deletes.'
+              : 'Your browser has no active Supabase Auth session (running as anon), so an authenticated-only DELETE policy blocked the delete.';
+            const msg = `Delete blocked by database policy (${stillPresent.length} matching row(s) still present for id: ${arrayOfStrings[0]}). ${roleHint}`;
+            setDbFetchError(msg);
+            setBulkActionNotice({ type: 'error', message: msg });
+            await refreshData();
+            return;
+          }
         }
 
-        const deletedCount = Array.isArray(data) ? data.length : idsToDelete.length;
-        TelecomStorage.hardDeleteCustomers(idsToDelete);
+        const deletedCount = Array.isArray(data) && data.length > 0 ? data.length : arrayOfStrings.length;
+        TelecomStorage.hardDeleteCustomers(arrayOfStrings);
         setSelectedIds([]);
-        if (selectedCustomer && idsToDelete.includes(normalizeRecordId(selectedCustomer.id))) {
+        if (selectedCustomer && arrayOfStrings.includes(extractFlatId(selectedCustomer.id))) {
           setSelectedCustomer(null);
         }
         await refreshData();
@@ -495,17 +514,17 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
           message: `Successfully deleted ${deletedCount} record${deletedCount === 1 ? '' : 's'} from Airwireless.`,
         });
       } else {
-        const leadId = normalizeRecordId(action.leadId);
-        if (!leadId) return;
+        const flatId: string = extractFlatId(action.leadId);
+        if (!flatId) return;
 
         const { data, error } = await supabase
           .from('Airwireless')
           .delete()
-          .eq('id', leadId)
+          .eq('id', flatId)
           .select('id');
 
         if (error) {
-          console.error('Supabase single delete error on Airwireless:', error);
+          console.error('Supabase single delete error on Airwireless:', error, { flatId });
           const msg = error.message || 'Failed to delete record from Supabase.';
           setDbFetchError(msg);
           setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
@@ -513,17 +532,26 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
         }
 
         if (Array.isArray(data) && data.length === 0) {
-          const msg =
-            `Supabase returned 0 deleted rows for id "${leadId}". Verify the DELETE policy on Airwireless allows authenticated users.`;
-          setDbFetchError(msg);
-          setBulkActionNotice({ type: 'error', message: msg });
-          await refreshData();
-          return;
+          const [{ data: stillPresent }, { data: sessionRes }] = await Promise.all([
+            supabase.from('Airwireless').select('id').eq('id', flatId),
+            supabase.auth.getSession(),
+          ]);
+
+          if (Array.isArray(stillPresent) && stillPresent.length > 0) {
+            const roleHint = sessionRes?.session
+              ? 'Check that your Supabase DELETE RLS policy on Airwireless ("Allow Admin Delete") has USING (true) for authenticated users.'
+              : 'No active Supabase Auth session found (running as anon), so an authenticated-only DELETE policy blocked the delete. Log out and sign back in with your Supabase password.';
+            const msg = `Delete blocked by database policy for id "${flatId}". ${roleHint}`;
+            setDbFetchError(msg);
+            setBulkActionNotice({ type: 'error', message: msg });
+            await refreshData();
+            return;
+          }
         }
 
-        TelecomStorage.hardDeleteCustomers([leadId]);
-        setSelectedIds((prev) => prev.filter((id) => id !== leadId));
-        if (selectedCustomer && normalizeRecordId(selectedCustomer.id) === leadId) {
+        TelecomStorage.hardDeleteCustomers([flatId]);
+        setSelectedIds((prev) => prev.filter((id) => id !== flatId));
+        if (selectedCustomer && extractFlatId(selectedCustomer.id) === flatId) {
           setSelectedCustomer(null);
         }
         await refreshData();
@@ -542,9 +570,9 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
     }
   };
 
-  // Bulk Assign Selected Leads (.update({ sales_rep }).in('id', ids))
+  // Bulk Assign Selected Leads (.update({ sales_rep }).in('id', arrayOfStrings))
   const handleBulkAssignLeads = async (selectedRep: string) => {
-    const idsToAssign = Array.from(new Set(selectedIds.map(normalizeRecordId).filter(Boolean)));
+    const idsToAssign: string[] = normalizeIdArray(selectedIds);
     if (idsToAssign.length === 0 || !selectedRep) return;
 
     const count = idsToAssign.length;
@@ -862,8 +890,8 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
 
   // Wrapper for deleting customer/lead from profile modal with automatic Supabase sync & refresh
   const handleModalDeleteCustomer = async (rawId: string) => {
-    const leadId = normalizeRecordId(rawId);
-    if (!leadId) {
+    const flatId: string = extractFlatId(rawId);
+    if (!flatId) {
       setBulkActionNotice({ type: 'error', message: 'Cannot delete record: missing primary key id.' });
       return;
     }
@@ -875,11 +903,11 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       const { data, error } = await supabase
         .from('Airwireless')
         .delete()
-        .eq('id', leadId)
+        .eq('id', flatId)
         .select('id');
 
       if (error) {
-        console.error('Supabase modal delete error on Airwireless:', error);
+        console.error('Supabase modal delete error on Airwireless:', error, { flatId });
         const msg = error.message || 'Failed to delete record from Supabase.';
         setDbFetchError(msg);
         setBulkActionNotice({ type: 'error', message: `Delete failed: ${msg}` });
@@ -887,16 +915,25 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
       }
 
       if (Array.isArray(data) && data.length === 0) {
-        const msg =
-          `Supabase returned 0 deleted rows for id "${leadId}". Verify the DELETE policy on Airwireless allows authenticated users.`;
-        setDbFetchError(msg);
-        setBulkActionNotice({ type: 'error', message: msg });
-        await refreshData();
-        return;
+        const [{ data: stillPresent }, { data: sessionRes }] = await Promise.all([
+          supabase.from('Airwireless').select('id').eq('id', flatId),
+          supabase.auth.getSession(),
+        ]);
+
+        if (Array.isArray(stillPresent) && stillPresent.length > 0) {
+          const roleHint = sessionRes?.session
+            ? 'Check that your Supabase DELETE RLS policy on Airwireless ("Allow Admin Delete") has USING (true) for authenticated users.'
+            : 'No active Supabase Auth session found (running as anon), so an authenticated-only DELETE policy blocked the delete.';
+          const msg = `Delete blocked by database policy for id "${flatId}". ${roleHint}`;
+          setDbFetchError(msg);
+          setBulkActionNotice({ type: 'error', message: msg });
+          await refreshData();
+          return;
+        }
       }
 
-      TelecomStorage.hardDeleteCustomers([leadId]);
-      setSelectedIds((prev) => prev.filter((id) => id !== leadId));
+      TelecomStorage.hardDeleteCustomers([flatId]);
+      setSelectedIds((prev) => prev.filter((id) => id !== flatId));
       setSelectedCustomer(null);
       await refreshData();
       setBulkActionNotice({
@@ -1357,7 +1394,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               onUpdateStatus={handleUpdateLeadStatus}
               onQuickActivate={handleQuickActivate}
               onDeactivateLead={handleDeactivateLine}
-              onDeleteLead={handleDeleteLead}
+              onDeleteLead={handleDelete}
               onAssignLead={handleAssignLead}
               onRefreshLeads={refreshData}
               isRefreshing={isRefreshingLeads}
@@ -1367,7 +1404,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               onToggleSelect={handleToggleSelectLead}
               onToggleSelectAll={handleToggleSelectAllLeads}
               onClearSelection={() => setSelectedIds([])}
-              onBulkDelete={handleBulkDeleteLeads}
+              onBulkDelete={handleBulkDelete}
               onBulkAssign={handleBulkAssignLeads}
               isBulkProcessing={isBulkProcessing}
               bulkActionNotice={bulkActionNotice}
@@ -1384,7 +1421,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               onOpenCustomer={(customer) => setSelectedCustomer(customer)}
               onActivateLine={handleQuickActivate}
               onDeactivateLine={handleDeactivateLine}
-              onDeleteLine={handleDeleteLead}
+              onDeleteLine={handleDelete}
               onAssignLead={handleAssignLead}
               isProcessing={isBulkProcessing}
               actionNotice={bulkActionNotice}
@@ -1401,7 +1438,7 @@ export const CrmDashboard: React.FC<CrmDashboardProps> = ({
               onOpenCustomer={(customer) => setSelectedCustomer(customer)}
               onActivateLine={handleQuickActivate}
               onDeactivateLine={handleDeactivateLine}
-              onDeleteLine={handleDeleteLead}
+              onDeleteLine={handleDelete}
               onAssignLead={handleAssignLead}
               isProcessing={isBulkProcessing}
               actionNotice={bulkActionNotice}
