@@ -488,7 +488,7 @@ export function mapAirwirelessRowToCustomerRecord(item: any): CustomerRecord {
     preferredPlanId: safeString(item?.preferred_plan_id || item?.preferredPlanId, 'ctexcel-27-50gb'),
     preferredPlanName: safeString(
       item?.preferred_plan_name || item?.preferredPlanName || item?.plan,
-      '$27 / 50GB 5G Plan'
+      '$27 / 50GB Plan (China-Canada Roaming)'
     ),
     monthlyPlanPrice: monthlyPrice,
     salesRep: safeString(

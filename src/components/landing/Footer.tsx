@@ -44,8 +44,13 @@ export const Footer: React.FC<FooterProps> = ({
             </div>
 
             <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
-              CTExcel is an authorized independent telecom dealer providing cross-border mobile connectivity packages powered by the nationwide Telus 5G network.
+              China Telecom CTExcel authorized dealer offering 5G mobile plans with unlimited international calling to 9 countries and seamless travel across Canada, US & Mexico.
             </p>
+
+            <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-1.5 text-xs font-bold text-emerald-900">
+              <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span>Free Roaming in China • Optional Chinese Phone Number Available</span>
+            </div>
 
             <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800">
               <ShieldCheck className="h-4 w-4 text-emerald-600" />

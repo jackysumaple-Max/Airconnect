@@ -115,7 +115,7 @@ export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
       phone,
       activatedPhone,
       preferredPlanId,
-      preferredPlanName: selectedPlan ? `${selectedPlan.name} ($${selectedPlan.monthlyPrice}/mo)` : customer.preferredPlanName,
+      preferredPlanName: selectedPlan ? selectedPlan.name : customer.preferredPlanName,
       salesRep,
       referralSource,
       notes,

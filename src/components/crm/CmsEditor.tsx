@@ -55,18 +55,20 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
   onPreviewSite,
 }) => {
   // Main CMS state
-  const [heroTitle, setHeroTitle] = useState(cms.heroTitle || 'CTExcel Mobile Plans. Powered by Telus.');
+  const [heroTitle, setHeroTitle] = useState(
+    cms.heroTitle || 'One SIM, Seamless Travel Across Canada, US & Mexico'
+  );
   const [heroSubtitle, setHeroSubtitle] = useState(
     cms.heroSubtitle ||
-      'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.'
+      '5G Speeds • Unlimited International Calling to 9 Countries (including China, US & Mexico)'
   );
-  const [heroBadge, setHeroBadge] = useState(cms.heroBadge || 'Exclusive Promotional Offer');
+  const [heroBadge, setHeroBadge] = useState(cms.heroBadge || 'Popular / Best Value');
   const [heroPromoPrice, setHeroPromoPrice] = useState(cms.heroPromoPrice || '$27');
   const [heroPromoData, setHeroPromoData] = useState(cms.heroPromoData || '50GB');
   const [heroImage, setHeroImage] = useState(cms.heroImage || '/assets/aistudio/image_de9eb1a6.png');
   const [announcementBarText, setAnnouncementBarText] = useState(
     cms.announcementBarText ||
-      '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'
+      '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $22/mo with Free Roaming in China • Optional Chinese Phone Number Available!'
   );
   const [announcementActive, setAnnouncementActive] = useState(cms.announcementActive ?? true);
   const [supportPhone, setSupportPhone] = useState(cms.supportPhone);
@@ -74,21 +76,23 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
   const [roamingFinePrint, setRoamingFinePrint] = useState(cms.roamingFinePrint || '');
 
   // Feature 2: Left Column (Checkmark Feature List)
-  const [heroFeature1, setHeroFeature1] = useState(cms.heroFeature1 || 'Free China-Canada Roaming');
-  const [heroFeature2, setHeroFeature2] = useState(cms.heroFeature2 || 'Complimentary Chinese Phone #');
+  const [heroFeature1, setHeroFeature1] = useState(cms.heroFeature1 || '5G Speeds on Telus Network');
+  const [heroFeature2, setHeroFeature2] = useState(cms.heroFeature2 || 'Free Roaming in China');
   const [heroFeature3, setHeroFeature3] = useState(cms.heroFeature3 || 'Unlimited Calling to 9 Countries');
-  const [heroFeature4, setHeroFeature4] = useState(cms.heroFeature4 || 'Free Instant eSIM QR Code');
+  const [heroFeature4, setHeroFeature4] = useState(
+    cms.heroFeature4 || 'Optional Chinese Phone Number Available'
+  );
 
   // Feature 2: Right Side Graphic Card
-  const [heroCardTag, setHeroCardTag] = useState(cms.heroCardTag || 'DUAL NUMBER SERVICE');
-  const [heroCardTitle, setHeroCardTitle] = useState(cms.heroCardTitle || 'Canada + China Dual Line');
+  const [heroCardTag, setHeroCardTag] = useState(cms.heroCardTag || 'ONE SIM · SEAMLESS TRAVEL');
+  const [heroCardTitle, setHeroCardTitle] = useState(cms.heroCardTitle || 'Canada, US, Mexico & China');
   const [heroCardPrice, setHeroCardPrice] = useState(cms.heroCardPrice || '$27/mo');
-  const [heroCardSubtitle, setHeroCardSubtitle] = useState(cms.heroCardSubtitle || 'Telus 5G eSIM');
+  const [heroCardSubtitle, setHeroCardSubtitle] = useState(cms.heroCardSubtitle || '50GB 5G Popular Plan');
   const [heroBox1Title, setHeroBox1Title] = useState(cms.heroBox1Title || '4 Countries');
   const [heroBox1Sub, setHeroBox1Sub] = useState(cms.heroBox1Sub || 'Free Roaming');
   const [heroBox2Title, setHeroBox2Title] = useState(cms.heroBox2Title || 'China #');
-  const [heroBox2Sub, setHeroBox2Sub] = useState(cms.heroBox2Sub || 'Included Free');
-  const [heroBox3Title, setHeroBox3Title] = useState(cms.heroBox3Title || '9 Nations');
+  const [heroBox2Sub, setHeroBox2Sub] = useState(cms.heroBox2Sub || 'Optional Add-On');
+  const [heroBox3Title, setHeroBox3Title] = useState(cms.heroBox3Title || '9 Countries');
   const [heroBox3Sub, setHeroBox3Sub] = useState(cms.heroBox3Sub || 'Unlimited Talk');
 
   // Upload state
@@ -111,36 +115,36 @@ export const CmsEditor: React.FC<CmsEditorProps> = ({
 
   // Sync local editor fields whenever cms prop hydrates asynchronously from Supabase
   useEffect(() => {
-    setHeroTitle(cms.heroTitle || 'CTExcel Mobile Plans. Powered by Telus.');
+    setHeroTitle(cms.heroTitle || 'One SIM, Seamless Travel Across Canada, US & Mexico');
     setHeroSubtitle(
       cms.heroSubtitle ||
-        'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.'
+        '5G Speeds • Unlimited International Calling to 9 Countries (including China, US & Mexico)'
     );
-    setHeroBadge(cms.heroBadge || 'Exclusive Promotional Offer');
+    setHeroBadge(cms.heroBadge || 'Popular / Best Value');
     setHeroPromoPrice(cms.heroPromoPrice || '$27');
     setHeroPromoData(cms.heroPromoData || '50GB');
     setHeroImage(cms.heroImage || '/assets/aistudio/image_de9eb1a6.png');
     setAnnouncementBarText(
       cms.announcementBarText ||
-        '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'
+        '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $22/mo with Free Roaming in China • Optional Chinese Phone Number Available!'
     );
     setAnnouncementActive(cms.announcementActive ?? true);
     setSupportPhone(cms.supportPhone);
     setBusinessHours(cms.businessHours);
     setRoamingFinePrint(cms.roamingFinePrint || '');
-    setHeroFeature1(cms.heroFeature1 || 'Free China-Canada Roaming');
-    setHeroFeature2(cms.heroFeature2 || 'Complimentary Chinese Phone #');
+    setHeroFeature1(cms.heroFeature1 || '5G Speeds on Telus Network');
+    setHeroFeature2(cms.heroFeature2 || 'Free Roaming in China');
     setHeroFeature3(cms.heroFeature3 || 'Unlimited Calling to 9 Countries');
-    setHeroFeature4(cms.heroFeature4 || 'Free Instant eSIM QR Code');
-    setHeroCardTag(cms.heroCardTag || 'DUAL NUMBER SERVICE');
-    setHeroCardTitle(cms.heroCardTitle || 'Canada + China Dual Line');
+    setHeroFeature4(cms.heroFeature4 || 'Optional Chinese Phone Number Available');
+    setHeroCardTag(cms.heroCardTag || 'ONE SIM · SEAMLESS TRAVEL');
+    setHeroCardTitle(cms.heroCardTitle || 'Canada, US, Mexico & China');
     setHeroCardPrice(cms.heroCardPrice || '$27/mo');
-    setHeroCardSubtitle(cms.heroCardSubtitle || 'Telus 5G eSIM');
+    setHeroCardSubtitle(cms.heroCardSubtitle || '50GB 5G Popular Plan');
     setHeroBox1Title(cms.heroBox1Title || '4 Countries');
     setHeroBox1Sub(cms.heroBox1Sub || 'Free Roaming');
     setHeroBox2Title(cms.heroBox2Title || 'China #');
-    setHeroBox2Sub(cms.heroBox2Sub || 'Included Free');
-    setHeroBox3Title(cms.heroBox3Title || '9 Nations');
+    setHeroBox2Sub(cms.heroBox2Sub || 'Optional Add-On');
+    setHeroBox3Title(cms.heroBox3Title || '9 Countries');
     setHeroBox3Sub(cms.heroBox3Sub || 'Unlimited Talk');
   }, [cms]);
 

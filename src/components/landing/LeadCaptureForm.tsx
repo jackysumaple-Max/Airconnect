@@ -12,6 +12,7 @@ interface LeadCaptureFormProps {
     email: string;
     phone: string;
     preferredPlanId: string;
+    preferredPlanName: string;
     salesRep?: string;
     referralSource?: string;
     callbackTimePreference?: string;
@@ -45,7 +46,11 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
     table?: string | null;
   } | null>(null);
 
-  const activePlans = plans.filter((p) => p.active);
+  const activePlans = [...plans]
+    .filter((p) => p.active)
+    .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
+  const chinaCanadaPlans = activePlans.filter((p) => p.roamingScope === 'China-Canada');
+  const quadRoamingPlans = activePlans.filter((p) => p.roamingScope === 'China-US-Canada-Mexico');
   const currentPlan = activePlans.find((p) => p.id === selectedPlanId) || activePlans[0];
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -73,12 +78,14 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
     setIsSubmitting(true);
 
     try {
+      const chosenPlan = currentPlan || activePlans[0];
       const createdRecord = await onSubmitLead({
         firstName,
         lastName,
         email,
         phone,
-        preferredPlanId: selectedPlanId || currentPlan?.id,
+        preferredPlanId: chosenPlan?.id || selectedPlanId,
+        preferredPlanName: chosenPlan?.name || '$27 / 50GB Plan (China-Canada Roaming)',
         salesRep: salesRep.trim() || 'Unassigned',
         referralSource: referralSource.trim() || 'Website Lead Capture',
         callbackTimePreference: callbackTime,
@@ -352,19 +359,32 @@ export const LeadCaptureForm: React.FC<LeadCaptureFormProps> = ({
                         <Tag className="h-4 w-4" />
                       </div>
                       <select
-                        value={selectedPlanId}
+                        value={currentPlan?.id || selectedPlanId}
                         onChange={(e) => onPlanChange(e.target.value)}
                         className="w-full rounded-xl border border-slate-200 pl-9 pr-8 py-2.5 text-xs sm:text-sm text-slate-900 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all bg-white font-medium"
                       >
-                        {activePlans.map((plan) => (
-                          <option key={plan.id} value={plan.id}>
-                            {plan.name} — ${plan.monthlyPrice}/mo ({plan.dataAllowance} Data) {plan.badge ? `[${plan.badge}]` : ''}
-                          </option>
-                        ))}
+                        {chinaCanadaPlans.length > 0 && (
+                          <optgroup label="Free China–Canada Roaming">
+                            {chinaCanadaPlans.map((plan) => (
+                              <option key={plan.id} value={plan.id}>
+                                {plan.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {quadRoamingPlans.length > 0 && (
+                          <optgroup label="Free China–US–Canada–Mexico Roaming">
+                            {quadRoamingPlans.map((plan) => (
+                              <option key={plan.id} value={plan.id}>
+                                {plan.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                     </div>
                     <p className="mt-1 text-[11px] text-slate-400">
-                      Dynamically linked to our live dealer promotions powered by Telus.
+                      Clicking any pricing card above automatically selects the matching plan here.
                     </p>
                   </div>
 

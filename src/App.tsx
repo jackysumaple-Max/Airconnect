@@ -88,10 +88,15 @@ export default function App() {
     fetchSiteSettingsFromSupabase().then(({ data, error }) => {
       if (!error && data) {
         setCms((prev) => {
+          const isLegacyHeroTitle =
+            data.heroTitle === 'CTExcel Mobile Plans. Powered by Telus.';
+          const isLegacyHeroSubtitle =
+            data.heroSubtitle ===
+            'Get up to 100GB 5G Data. Includes Free Roaming in Canada, US, Mexico & China, plus Unlimited Calling to 9 Countries.';
           const updated: CMSConfig = {
             ...prev,
-            heroTitle: data.heroTitle || prev.heroTitle,
-            heroSubtitle: data.heroSubtitle || prev.heroSubtitle,
+            heroTitle: !isLegacyHeroTitle && data.heroTitle ? data.heroTitle : prev.heroTitle,
+            heroSubtitle: !isLegacyHeroSubtitle && data.heroSubtitle ? data.heroSubtitle : prev.heroSubtitle,
             heroImage: data.heroImage || prev.heroImage,
             heroBadge: data.heroBadge || prev.heroBadge,
             heroPromoPrice: data.heroPromoPrice || prev.heroPromoPrice,
@@ -220,6 +225,7 @@ export default function App() {
     email: string;
     phone: string;
     preferredPlanId: string;
+    preferredPlanName?: string;
     salesRep?: string;
     referralSource?: string;
     callbackTimePreference?: string;
@@ -397,7 +403,7 @@ export default function App() {
             <Sparkles className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
             <span className="truncate">
               {cms.announcementBarText?.trim() ||
-                '🇨🇦 🇨🇳 🇺🇸 🇲🇽 Special Promotion: Plans starting from $27/50GB with Free China Roaming + Telus 5G Network!'}
+                '5G Speeds • Free Roaming in China • Unlimited International Calling to 9 Countries • Optional Chinese Phone Number Available'}
             </span>
           </div>
         </aside>

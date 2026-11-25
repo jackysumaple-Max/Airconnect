@@ -53,7 +53,7 @@ export const NewCustomerModal: React.FC<NewCustomerModalProps> = ({
       phone: phone.trim(),
       activatedPhone: phone.trim(),
       preferredPlanId: selectedPlan.id,
-      preferredPlanName: `${selectedPlan.name} ($${selectedPlan.monthlyPrice}/mo)`,
+      preferredPlanName: selectedPlan.name,
       monthlyPlanPrice: selectedPlan.monthlyPrice,
       salesRep,
       referralSource,
